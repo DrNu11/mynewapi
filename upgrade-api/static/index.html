@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>gopay在线升级</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <main class="page-shell">
+    <section class="hero-card">
+      <nav class="topbar" aria-label="页面导航">
+        <div class="brand">
+          <span class="brand-mark">G</span>
+          <span>gopay在线升级</span>
+        </div>
+        <span id="statusPill" class="status-pill" data-state="loading">连接中…</span>
+      </nav>
+
+      <div class="hero-grid">
+        <section class="hero-copy" aria-labelledby="page-title">
+          <p class="eyebrow">Plus Upgrade Service</p>
+          <h1 id="page-title">gopay在线升级</h1>
+          <p class="subtitle">
+            简洁、快速、透明的在线升级申请页面。仅采集邮箱与订单号，不读取任何账号会话信息。
+          </p>
+
+          <div class="benefit-list" aria-label="服务亮点">
+            <div class="benefit-item">
+              <span>01</span>
+              <p>提交后即时显示排队人数与邀请奖励进度。</p>
+            </div>
+            <div class="benefit-item">
+              <span>02</span>
+              <p>邀请好友成功提交后可免费加一次升级机会。</p>
+            </div>
+            <div class="benefit-item">
+              <span>03</span>
+              <p>所有数据落地服务器 SQLite，可在管理面板查看。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="upgrade-panel" aria-label="升级申请表单">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Upgrade Form</p>
+              <h2>提交升级申请</h2>
+            </div>
+            <div class="price-tag">Plus</div>
+          </div>
+
+          <form id="upgradeForm" class="upgrade-form">
+            <label>
+              联系邮箱
+              <input id="email" name="email" type="email" placeholder="name@example.com" required />
+            </label>
+
+            <label>
+              gopay订单号
+              <input id="order" name="order" type="text" placeholder="请输入支付订单号" required />
+            </label>
+
+            <label>
+              邀请码（可选）
+              <input id="inviteCode" name="inviteCode" type="text" placeholder="好友邀请码，可免费加一次" />
+            </label>
+
+            <button id="submitButton" type="submit">提交升级申请</button>
+          </form>
+
+          <div id="errorCard" class="error-card" hidden role="alert"></div>
+
+          <div id="resultCard" class="result-card" hidden>
+            <p class="success-label">提交成功</p>
+            <h3>当前已有 <span id="queueCount">0</span> 人提交</h3>
+            <p id="inviteMessage">分享你的邀请链接，好友提交后可免费加一次。</p>
+            <div class="share-box">
+              <input id="shareLink" type="text" readonly value="" aria-label="邀请链接" />
+              <button id="copyButton" type="button">复制邀请链接</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="./script.js"></script>
+</body>
+
+</html>

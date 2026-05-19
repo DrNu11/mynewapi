@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>gopay · 运维面板</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/upgrade/admin.css" />
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">⚙</span>
+      <span>gopay · 运维面板</span>
+    </div>
+    <div class="header-status">
+      <span id="serviceBadge" class="badge" data-state="loading">服务状态：检测中…</span>
+      <span id="healthBadge" class="badge" data-state="loading">健康：检测中…</span>
+      <button id="refreshBtn" type="button" class="ghost-btn">刷新</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- 鉴权 -->
+    <section class="card auth-card">
+      <h2>管理员 Token</h2>
+      <p class="hint">所有运维操作需要 token。保存后存在浏览器本地,以后这个浏览器自动免登录。</p>
+      <div class="row">
+        <input id="tokenInput" type="password" placeholder="X-Admin-Token" autocomplete="off" />
+        <button id="saveTokenBtn" type="button" class="primary-btn">保存</button>
+        <button id="clearTokenBtn" type="button" class="ghost-btn">清除</button>
+      </div>
+      <p id="authStatus" class="auth-status">未配置</p>
+      <div class="row" style="margin-top:10px;gap:6px;">
+        <button id="copyMagicLinkBtn" type="button" class="ghost-btn" title="生成带 token 的快捷登录链接,加书签后任意浏览器点开都自动登录">📌
+          复制免登录链接</button>
+      </div>
+      <p class="hint" style="margin-top:8px;font-size:12px;color:#9ca3af;">把上面的链接存为书签,以后任何浏览器点开都直接进面板,完全免输入。</p>
+    </section>
+
+    <!-- 当前版本 -->
+    <section class="card info-card">
+      <h2>当前 chatgpt2cpa 版本</h2>
+      <dl class="info-grid">
+        <dt>分支</dt>
+        <dd id="curBranch">—</dd>
+        <dt>Commit</dt>
+        <dd id="curCommit">—</dd>
+        <dt>提交信息</dt>
+        <dd id="curMsg">—</dd>
+        <dt>Health URL</dt>
+        <dd id="healthUrl">—</dd>
+      </dl>
+    </section>
+
+    <!-- 部署 -->
+    <section class="card deploy-card">
+      <h2>部署新版本</h2>
+      <div class="tabs">
+        <button class="tab active" data-tab="git">从 Git 升级</button>
+        <button class="tab" data-tab="zip">上传 Zip 包</button>
+      </div>
+
+      <!-- Tab: Git -->
+      <div id="tab-git" class="tab-panel">
+        <label>
+          分支 / Tag / Commit SHA
+          <input id="gitRef" type="text" placeholder="main / v1.2.3 / e021a2b" value="main" />
+        </label>
+        <label class="check-row">
+          <input id="gitPipInstall" type="checkbox" checked />
+          <span>升级后跑 <code>pip install -e .</code>（依赖变化时勾选）</span>
+        </label>
+        <label>
+          备注（可选）
+          <input id="gitNote" type="text" placeholder="例如：修复 X bug" maxlength="200" />
+        </label>
+        <button id="deployGitBtn" type="button" class="primary-btn">开始升级</button>
+      </div>
+
+      <!-- Tab: Zip -->
+      <div id="tab-zip" class="tab-panel" hidden>
+        <label>
+          选择 zip 包
+          <input id="zipFile" type="file" accept=".zip" />
+        </label>
+        <label class="check-row">
+          <input id="zipPipInstall" type="checkbox" checked />
+          <span>升级后跑 <code>pip install -e .</code></span>
+        </label>
+        <label>
+          备注（可选）
+          <input id="zipNote" type="text" placeholder="例如：手动覆盖部署 v1.5" maxlength="200" />
+        </label>
+        <button id="deployZipBtn" type="button" class="primary-btn">上传并升级</button>
+      </div>
+    </section>
+
+    <!-- 实时日志 -->
+    <section class="card logs-card">
+      <header class="card-header">
+        <h2>实时日志</h2>
+        <span id="jobBadge" class="badge" data-state="idle" hidden></span>
+      </header>
+      <pre id="logBox" class="log-box">（这里会显示部署/回滚的实时输出）</pre>
+    </section>
+
+    <!-- 备份 -->
+    <section class="card backups-card">
+      <header class="card-header">
+        <h2>历史备份（可回滚）</h2>
+        <button id="reloadBackupsBtn" type="button" class="ghost-btn">刷新</button>
+      </header>
+      <div id="backupsBox" class="table-box">（载入中…）</div>
+    </section>
+
+    <!-- 订单 -->
+    <section class="card orders-card">
+      <header class="card-header">
+        <h2>升级订单</h2>
+        <div class="row">
+          <input id="orderQuery" type="text" placeholder="搜索邮箱 / 订单号 / 邀请码" />
+          <button id="reloadOrdersBtn" type="button" class="ghost-btn">刷新</button>
+          <button id="dedupOrdersBtn" type="button" class="ghost-btn" title="按邮箱去重,保留最新一条,旧的改为 refunded">🧹
+            检查重复</button>
+          <button id="exportAuthZipBtn" type="button" class="ghost-btn"
+            title="把所有有效 auth.json 打包成 zip 下载,用于 CPA 端批量导入">📦 导出 auth.json</button>
+        </div>
+      </header>
+      <div id="ordersBox" class="table-box">（载入中…）</div>
+    </section>
+  </main>
+
+  <script src="/upgrade/admin.js"></script>
+</body>
+
+</html>

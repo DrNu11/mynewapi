@@ -1,0 +1,23 @@
+[Unit]
+Description=upgrade-api (gopay 在线升级 + OTA 运维面板)
+After=network.target
+# 强烈建议：让此服务在 chatgpt2cpa 之后启动（OTA 健康检查依赖目标存活）
+Wants=chatgpt2cpa.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/upgrade-api
+EnvironmentFile=/opt/upgrade-api/.env
+ExecStart=/opt/upgrade-api/.venv/bin/upgrade-api
+Restart=on-failure
+RestartSec=3
+# 安全加固（OTA 仍需要写 /opt/chatgpt2cpa 和 /opt/chatgpt2cpa-backups）
+NoNewPrivileges=true
+ProtectSystem=false
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

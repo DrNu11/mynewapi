@@ -1,0 +1,14 @@
+# /etc/sudoers.d/upgrade-api
+# 仅当 upgrade-api 服务以非 root 用户跑时需要此文件。
+# 当前默认 service 文件以 root 跑（最简单），可不安装。
+#
+# 若要降权到 upgrade-api 用户，请：
+#   1. useradd -r -s /usr/sbin/nologin upgrade-api
+#   2. chown -R upgrade-api:upgrade-api /opt/upgrade-api /opt/chatgpt2cpa-backups
+#   3. 修改 upgrade-api.service：User=upgrade-api, Group=upgrade-api
+#   4. 把本文件复制到 /etc/sudoers.d/ ，权限 0440
+#   5. visudo -c 校验语法
+
+upgrade-api ALL=(root) NOPASSWD: /bin/systemctl restart chatgpt2cpa.service
+upgrade-api ALL=(root) NOPASSWD: /bin/systemctl status chatgpt2cpa.service
+upgrade-api ALL=(root) NOPASSWD: /bin/systemctl is-active chatgpt2cpa.service

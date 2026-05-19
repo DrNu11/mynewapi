@@ -1,0 +1,9 @@
+node_modules
+.next
+out
+.env.local
+.env.*.local
+data/openclaw.sample.json.bak.*
+data/.openclaw.json.tmp.*
+*.log
+.DS_Store

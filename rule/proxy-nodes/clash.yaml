@@ -1,0 +1,107 @@
+# Clash Meta / mihomo / Clash Verge Rev 配置
+# 仅 proxies + proxy-groups,可直接合并到现有配置或独立使用
+# 生成时间:2026-05-15
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+
+dns:
+  enable: true
+  ipv6: false
+  enhanced-mode: fake-ip
+  nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  fallback:
+    - https://dns.cloudflare.com/dns-query
+    - https://dns.google/dns-query
+
+proxies:
+  # 1. VLESS Reality (主用,最隐蔽)
+  - name: "Reality-CF-207"
+    type: vless
+    server: 207.244.243.12
+    port: 443
+    uuid: a33f9fb8-51bb-46d0-8d3a-6b54fdc15943
+    network: tcp
+    udp: true
+    tls: true
+    flow: xtls-rprx-vision
+    servername: www.cloudflare.com
+    reality-opts:
+      public-key: 7pnL_m6XftDfRH5Lue-2zI1a0XWg-xcQd5F8m5lqChg
+      short-id: d5f348390b201e86
+    client-fingerprint: chrome
+
+  # 2. Hysteria2 (备用,UDP 极速)
+  - name: "Hysteria2-207"
+    type: hysteria2
+    server: 207.244.243.12
+    port: 36713
+    password: QKBEoj0FhaXZzda9Xi7Qv1Nq
+    sni: www.bing.com
+    skip-cert-verify: true
+    up: 100 Mbps
+    down: 500 Mbps
+
+  # 3. Shadowsocks-2022 (兜底)
+  - name: "SS2022-Boss-207"
+    type: ss
+    server: 207.244.243.12
+    port: 8388
+    cipher: 2022-blake3-aes-256-gcm
+    password: "Y9V8K1K9HP8eal2uHOidOTYiCh8idIE1h/6E43KpAG4="
+    udp: true
+
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "♻️ 自动选择"
+      - "Reality-CF-207"
+      - "Hysteria2-207"
+      - "SS2022-Boss-207"
+      - DIRECT
+
+  - name: "♻️ 自动选择"
+    type: url-test
+    proxies:
+      - "Reality-CF-207"
+      - "Hysteria2-207"
+      - "SS2022-Boss-207"
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+
+  - name: "🌍 国外"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - DIRECT
+
+  - name: "🛑 广告拦截"
+    type: select
+    proxies:
+      - REJECT
+      - DIRECT
+
+rules:
+  # 私网直连
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,17.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,local,DIRECT
+
+  # 中国大陆
+  - GEOIP,CN,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,cn,DIRECT
+  - DOMAIN-KEYWORD,china,DIRECT
+
+  # 默认走代理
+  - MATCH,🚀 节点选择

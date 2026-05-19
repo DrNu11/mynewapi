@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>gopay在线升级</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css?v=4">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero-card">
+      <nav class="topbar" aria-label="页面导航">
+        <div class="brand">
+          <span class="brand-mark">G</span>
+          <span>gopay在线升级</span>
+        </div>
+        <a class="session-link" href="{{ session_url }}" target="_blank" rel="noopener">打开 session 页面</a>
+      </nav>
+
+      <div class="hero-grid">
+        <section class="hero-copy" aria-labelledby="page-title">
+          <p class="eyebrow">Plus Upgrade Service</p>
+          <h1 id="page-title">gopay在线升级</h1>
+          <p class="subtitle">粘贴 ChatGPT session JSON，填写 gopay 订单号，即可提交升级申请。</p>
+
+          <div class="benefit-list" aria-label="服务亮点">
+            <div class="benefit-item">
+              <span>01</span>
+              <p>支持从 {{ session_url }} 复制完整 JSON 后直接粘贴。</p>
+            </div>
+            <div class="benefit-item">
+              <span>02</span>
+              <p>邀请好友成功后免费加一次升级机会。</p>
+            </div>
+            <div class="benefit-item">
+              <span>03</span>
+              <p>提交后立即显示当前申请人数与订单状态。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="upgrade-panel" aria-label="升级申请表单">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Upgrade Form</p>
+              <h2>提交升级申请</h2>
+            </div>
+            <div class="price-tag">Plus</div>
+          </div>
+
+          <form id="upgradeForm" class="upgrade-form">
+            <label for="sessionJson">ChatGPT session JSON</label>
+            <textarea id="sessionJson" spellcheck="false" placeholder="打开上方 session 页面，复制返回的完整 JSON 后粘贴到这里" required></textarea>
+
+            <label for="accessToken">access token</label>
+            <div class="token-field">
+              <input id="accessToken" name="accessToken" type="password" placeholder="粘贴 access token 后自动识别">
+              <span id="tokenStatus" class="token-status">未填写</span>
+            </div>
+
+            <label for="orderId">gopay订单号</label>
+            <input id="orderId" name="orderId" type="text" placeholder="请输入 gopay 支付订单号" required>
+
+            <label for="inviteCode">邀请码（可选）</label>
+            <input id="inviteCode" name="inviteCode" type="text" placeholder="好友邀请码，可免费加一次">
+
+            <div class="invite-stats">
+              <div>
+                <span>我的邀请码</span>
+                <strong id="ownInviteCode">-</strong>
+              </div>
+              <div>
+                <span>剩余免费机会</span>
+                <strong><span id="chanceCount">1</span> 次</strong>
+              </div>
+              <div>
+                <span>好友奖励</span>
+                <strong><span id="bonusCount">0</span> 次</strong>
+              </div>
+            </div>
+
+            <div class="share-box invite-share-box">
+              <input id="shareLink" type="text" readonly value="" aria-label="邀请链接">
+              <button id="copyButton" type="button">复制邀请链接</button>
+            </div>
+
+            <button class="submit-btn" type="submit">提交升级申请</button>
+          </form>
+
+          <div id="errorBox" class="error-card" hidden></div>
+
+          <div id="resultCard" class="result-card" hidden>
+            <p class="success-label">提交成功</p>
+            <h3>当前已有 <span id="queueCount">0</span> 人提交</h3>
+            <div class="summary" id="summary"></div>
+            <p id="inviteMessage">分享你的邀请链接，好友提交后可免费加一次。</p>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js?v=4"></script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>gopay在线升级</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/static/plus/styles.css" />
+</head>
+
+<body>
+  <main class="page-shell">
+    <section class="hero-card">
+      <nav class="topbar" aria-label="页面导航">
+        <div class="brand">
+          <span class="brand-mark">G</span>
+          <span>GPTgopay在线升级</span>
+        </div>  
+        <span class="status-pill">安全在线提交</span>
+      </nav>
+
+      <div class="hero-grid">
+        <section class="hero-copy" aria-labelledby="page-title">
+          <p class="eyebrow">Plus Upgrade Service</p>
+          <h1 id="page-title">GPTgopay在线升级</h1>
+          <p class="subtitle">
+            简洁、快速、透明的在线升级申请页面。提交后系统会保存申请记录，并生成你的专属邀请链接。
+          </p>
+
+          <div class="benefit-list" aria-label="服务亮点">
+            <div class="benefit-item">
+              <span>01</span>
+              <p>每邀请 1 位好友成功提交，自动累计 1 次免单机会。</p>
+            </div>
+            <div class="benefit-item">
+              <span>02</span>
+              <p>公益站,人多请等待一段时间。</p>
+            </div>
+          </div>
+
+          <div class="queue-progress"
+            style="margin-top:18px;padding:14px 16px;border-radius:12px;background:linear-gradient(135deg,rgba(35,87,255,0.06),rgba(32,214,164,0.10));border:1px solid rgba(35,87,255,0.14);">
+            <div
+              style="display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:#536179;margin-bottom:8px;">
+              <span>当前排队进度</span>
+              <span><strong id="queueProgressNum" style="color:#2357ff;font-size:18px;font-weight:900;">--</strong>
+                人已提交</span>
+            </div>
+            <div style="height:10px;background:rgba(35,87,255,0.08);border-radius:999px;overflow:hidden;">
+              <div id="queueProgressBar"
+                style="height:100%;width:0%;background:linear-gradient(90deg,#2357ff,#20d6a4);transition:width .8s ease;border-radius:999px;">
+              </div>
+            </div>
+            <p id="queueProgressHint" style="margin:8px 0 0 0;font-size:12px;color:#8090a8;">载入中…</p>
+          </div>
+
+          <div class="session-tip"
+            style="margin-top:18px;padding:12px 16px;border-left:3px solid #4ade80;background:rgba(74,222,128,0.08);border-radius:6px;font-size:13px;line-height:1.7;">
+            <strong>如何获取 session?</strong><br />
+            1. 浏览器登录
+            <a href="https://chatgpt.com" target="_blank" rel="noreferrer" style="color:#4ade80;">chatgpt.com</a><br />
+            2. 同浏览器打开
+            <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noreferrer"
+              style="color:#4ade80;">chatgpt.com/api/auth/session</a><br />
+            3. 复制整段 JSON 粘贴到右边表单
+          </div>
+        </section>
+
+        <section class="upgrade-panel" aria-label="升级申请表单">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Upgrade Form</p>
+              <h2>提交升级申请</h2>
+            </div>
+            <div class="price-tag">Plus</div>
+          </div>
+
+          <form id="upgradeForm" class="upgrade-form">
+            <label>
+              邀请码（可选）
+              <input id="inviteCode" name="inviteCode" type="text" placeholder="好友邀请码，可免费加一次" />
+            </label>
+
+            <label>
+              ChatGPT Session JSON
+              <textarea id="sessionJson" name="sessionJson" rows="6" required
+                placeholder='请粘贴 chatgpt.com/api/auth/session 完整 JSON,例如 {"user":{"email":"..."},"accessToken":"eyJ..."}'
+                style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;resize:vertical;"></textarea>
+              <small id="sessionHint"
+                style="display:block;margin-top:4px;font-size:12px;color:#94a3b8;min-height:18px;">
+                粘贴后会自动检测是否有效。
+              </small>
+            </label>
+
+            <button id="submitButton" type="submit">提交升级申请</button>
+          </form>
+
+          <div id="errorMessage" class="error-message" hidden></div>
+
+          <div id="resultCard" class="result-card" hidden>
+            <p class="success-label">提交成功</p>
+            <h3>当前已有 <span id="queueCount">0</span> 人提交</h3>
+            <p id="inviteMessage">分享你的邀请链接，好友提交后可免费加一次。</p>
+            <div class="share-box">
+              <input id="shareLink" type="text" readonly value="" aria-label="邀请链接" />
+              <button id="copyButton" type="button">复制邀请链接</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/plus/script.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,173 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "cloudflare",
+        "address": "https://1.1.1.1/dns-query",
+        "detour": "🚀 节点选择"
+      },
+      {
+        "tag": "local",
+        "address": "223.5.5.5",
+        "detour": "direct"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": ["geosite-cn"],
+        "server": "local"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "utun-singbox",
+      "address": ["172.19.0.1/30"],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "system"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "🚀 节点选择",
+      "outbounds": [
+        "♻️ 自动选择",
+        "Reality-CF-207",
+        "Hysteria2-207",
+        "SS2022-Boss-207",
+        "direct"
+      ],
+      "default": "♻️ 自动选择"
+    },
+    {
+      "type": "urltest",
+      "tag": "♻️ 自动选择",
+      "outbounds": [
+        "Reality-CF-207",
+        "Hysteria2-207",
+        "SS2022-Boss-207"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "5m",
+      "tolerance": 50
+    },
+
+    {
+      "type": "vless",
+      "tag": "Reality-CF-207",
+      "server": "207.244.243.12",
+      "server_port": 443,
+      "uuid": "a33f9fb8-51bb-46d0-8d3a-6b54fdc15943",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.cloudflare.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "7pnL_m6XftDfRH5Lue-2zI1a0XWg-xcQd5F8m5lqChg",
+          "short_id": "d5f348390b201e86"
+        }
+      }
+    },
+
+    {
+      "type": "hysteria2",
+      "tag": "Hysteria2-207",
+      "server": "207.244.243.12",
+      "server_port": 36713,
+      "password": "QKBEoj0FhaXZzda9Xi7Qv1Nq",
+      "up_mbps": 100,
+      "down_mbps": 500,
+      "tls": {
+        "enabled": true,
+        "server_name": "www.bing.com",
+        "insecure": true
+      }
+    },
+
+    {
+      "type": "shadowsocks",
+      "tag": "SS2022-Boss-207",
+      "server": "207.244.243.12",
+      "server_port": 8388,
+      "method": "2022-blake3-aes-256-gcm",
+      "password": "Y9V8K1K9HP8eal2uHOidOTYiCh8idIE1h/6E43KpAG4="
+    },
+
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    },
+    {
+      "type": "dns",
+      "tag": "dns-out"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "protocol": "dns",
+        "outbound": "dns-out"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "rule_set": ["geosite-cn", "geoip-cn"],
+        "outbound": "direct"
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "geosite-cn",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+        "download_detour": "🚀 节点选择"
+      },
+      {
+        "type": "remote",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+        "download_detour": "🚀 节点选择"
+      }
+    ],
+    "final": "🚀 节点选择",
+    "auto_detect_interface": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db"
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui"
+    }
+  }
+}
