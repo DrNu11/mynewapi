@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'NassaAPI 激活中心',
-  description: '输入卡密激活,享受 GPT-5、DeepSeek、Codex 不限量调用',
+  description: '输入卡密激活,使用 GPT-5、DeepSeek、Codex 套餐额度',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

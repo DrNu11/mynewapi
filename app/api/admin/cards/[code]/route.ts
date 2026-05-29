@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/auth';
-import { getCardByCode, setCardStatus } from '@/lib/db';
+import { getCardByCode, setCardStatus, setCardPool } from '@/lib/db';
 import { updateTokenStatus } from '@/lib/newapi';
 import { normalizeCode } from '@/lib/codes';
 
@@ -13,7 +13,9 @@ function unauthorized() {
 
 /**
  * PATCH /api/admin/cards/[code]
- * Body: { action: 'disable' | 'enable' }
+ * Body 三种形态:
+ *   { action: 'disable' | 'enable' }       — 启用/禁用卡密 + 联动 NewAPI token
+ *   { action: 'set_pool', pool: string }   — 修改运营归属池(pool="" 清除)
  *
  * 同时联动 NewAPI 的 token status:
  *   disable → cards.status='disabled' + NewAPI token status=2
@@ -28,7 +30,7 @@ export async function PATCH(
   if (!isAdminAuthenticated()) return unauthorized();
 
   const code = normalizeCode(params.code || '');
-  let body: { action?: string };
+  let body: { action?: string; pool?: string };
   try {
     body = await req.json();
   } catch {
@@ -36,9 +38,9 @@ export async function PATCH(
   }
 
   const action = body.action;
-  if (action !== 'disable' && action !== 'enable') {
+  if (action !== 'disable' && action !== 'enable' && action !== 'set_pool') {
     return NextResponse.json(
-      { success: false, message: 'action 必须是 disable 或 enable' },
+      { success: false, message: 'action 必须是 disable / enable / set_pool' },
       { status: 400 }
     );
   }
@@ -46,6 +48,12 @@ export async function PATCH(
   const card = getCardByCode(code);
   if (!card) {
     return NextResponse.json({ success: false, message: '卡密不存在' }, { status: 404 });
+  }
+
+  // 只改运营池标签 — 不联动 NewAPI,快路返回
+  if (action === 'set_pool') {
+    const updated = setCardPool(code, body.pool ?? null);
+    return NextResponse.json({ success: true, data: { card: updated } });
   }
 
   // 联动 NewAPI token 状态(若已激活/绑定 token)

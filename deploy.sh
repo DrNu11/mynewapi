@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 一键部署 nassa-cards 到 154 VPS
+# 一键部署 nassa-cards 到 207 VPS
 # 用法: ./deploy.sh
 # 关键安全保证:保留 data/ 目录(SQLite 数据库)和 .env.local
 set -euo pipefail
 
 REMOTE_USER="root"
-REMOTE_HOST="154.64.231.223"
+REMOTE_HOST="207.244.243.12"
 REMOTE_DIR="/opt/nassa-cards"
 LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 TS="$(date +%Y%m%d_%H%M%S)"

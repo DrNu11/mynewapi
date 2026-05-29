@@ -28,6 +28,7 @@ function init(inst: Database.Database) {
       plan_days INTEGER NOT NULL,
       category TEXT,
       rph INTEGER NOT NULL DEFAULT 0,
+      pool TEXT,
       status TEXT NOT NULL DEFAULT 'unused',
       created_at INTEGER NOT NULL,
       activated_at INTEGER,
@@ -41,6 +42,7 @@ function init(inst: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_cards_code ON cards(code);
     CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status);
     CREATE INDEX IF NOT EXISTS idx_cards_token_key ON cards(newapi_token_key);
+    CREATE INDEX IF NOT EXISTS idx_cards_pool ON cards(pool);
 
     CREATE TABLE IF NOT EXISTS request_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,6 +67,22 @@ function init(inst: Database.Database) {
       count INTEGER NOT NULL,
       PRIMARY KEY (key, window_start)
     );
+
+    CREATE TABLE IF NOT EXISTS renewals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      original_card_id INTEGER NOT NULL,
+      renewal_card_id INTEGER NOT NULL UNIQUE,
+      renewed_at INTEGER NOT NULL,
+      before_expires_at INTEGER NOT NULL,
+      after_expires_at INTEGER NOT NULL,
+      added_days REAL NOT NULL,
+      newapi_token_id INTEGER NOT NULL,
+      renewal_ip TEXT,
+      FOREIGN KEY (original_card_id) REFERENCES cards(id),
+      FOREIGN KEY (renewal_card_id) REFERENCES cards(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_renewals_original ON renewals(original_card_id);
+    CREATE INDEX IF NOT EXISTS idx_renewals_when ON renewals(renewed_at);
   `);
   // Migration: 给老库补缺失列
   const cols = inst.prepare('PRAGMA table_info(cards)').all() as Array<{ name: string }>;
@@ -76,6 +94,10 @@ function init(inst: Database.Database) {
   }
   if (!cols.some((c) => c.name === 'rph')) {
     inst.exec('ALTER TABLE cards ADD COLUMN rph INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!cols.some((c) => c.name === 'pool')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN pool TEXT');
+    inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_pool ON cards(pool)');
   }
   // request_logs 老库补 model 列(新建库已在上面 CREATE 时带上)
   const rlCols = inst.prepare('PRAGMA table_info(request_logs)').all() as Array<{ name: string }>;
@@ -93,6 +115,8 @@ export interface Card {
   category: string | null;
   /** 每小时请求数上限(0 = 不限) */
   rph: number;
+  /** 内部运营标签(号池/批次),仅管理员可见;NULL = 未归属 */
+  pool: string | null;
   status: 'unused' | 'activating' | 'activated' | 'expired' | 'disabled';
   created_at: number;
   activated_at: number | null;
@@ -137,11 +161,28 @@ export function releaseCardClaim(code: string): void {
 
 export function insertCard(row: Omit<Card, 'id'>): number {
   const stmt = db().prepare(`
-    INSERT INTO cards (code, plan, plan_days, category, rph, status, created_at, activated_at, expires_at, newapi_token_id, newapi_token_key, activator_ip, notes)
-    VALUES (@code, @plan, @plan_days, @category, @rph, @status, @created_at, @activated_at, @expires_at, @newapi_token_id, @newapi_token_key, @activator_ip, @notes)
+    INSERT INTO cards (code, plan, plan_days, category, rph, pool, status, created_at, activated_at, expires_at, newapi_token_id, newapi_token_key, activator_ip, notes)
+    VALUES (@code, @plan, @plan_days, @category, @rph, @pool, @status, @created_at, @activated_at, @expires_at, @newapi_token_id, @newapi_token_key, @activator_ip, @notes)
   `);
   const info = stmt.run(row);
   return info.lastInsertRowid as number;
+}
+
+/** 列出所有已使用的 pool 名称(去重 + 字典序),admin 下拉框用 */
+export function listPools(): string[] {
+  const rows = db()
+    .prepare(`SELECT DISTINCT pool FROM cards WHERE pool IS NOT NULL AND pool != '' ORDER BY pool ASC`)
+    .all() as Array<{ pool: string }>;
+  return rows.map((r) => r.pool);
+}
+
+/** 设置/清除单卡 pool;pool 传 null 或空串清除归属 */
+export function setCardPool(code: string, pool: string | null): Card | null {
+  const card = getCardByCode(code);
+  if (!card) return null;
+  const v = pool && pool.trim() ? pool.trim().slice(0, 64) : null;
+  db().prepare('UPDATE cards SET pool = ? WHERE code = ?').run(v, code);
+  return getCardByCode(code);
 }
 
 /** 根据 sk-key 查卡 — /v1 代理路由鉴权用 */
@@ -380,12 +421,12 @@ export function setCardStatus(code: string, action: 'disable' | 'enable'): Card 
   return getCardByCode(code);
 }
 
-/** 把已占领(activating)的卡密 finalize 成 activated */
+/** 把已占领(activating)的卡密 finalize 成 activated;expiresAt=null 表示永不过期 */
 export function activateCard(
   code: string,
   tokenId: number,
   tokenKey: string,
-  expiresAt: number
+  expiresAt: number | null
 ): void {
   db().prepare(`
     UPDATE cards
@@ -399,12 +440,23 @@ export function activateCard(
   `).run(Math.floor(Date.now() / 1000), expiresAt, tokenId, tokenKey, code);
 }
 
-export function listCards(opts: { status?: string; plan?: string; limit?: number; offset?: number } = {}): Card[] {
-  const { status, plan, limit = 100, offset = 0 } = opts;
+export function listCards(opts: { status?: string; plan?: string; pool?: string; q?: string; limit?: number; offset?: number } = {}): Card[] {
+  const { status, plan, pool, q, limit = 100, offset = 0 } = opts;
   const where: string[] = [];
   const params: any[] = [];
   if (status) { where.push('status = ?'); params.push(status); }
   if (plan) { where.push('plan = ?'); params.push(plan); }
+  if (pool === '__none__') {
+    where.push('(pool IS NULL OR pool = "")');
+  } else if (pool) {
+    where.push('pool = ?'); params.push(pool);
+  }
+  if (q) {
+    // 模糊搜索: 卡密 / 备注 / NewAPI sk-key
+    where.push('(code LIKE ? OR notes LIKE ? OR newapi_token_key LIKE ?)');
+    const like = `%${q}%`;
+    params.push(like, like, like);
+  }
   const sql = `SELECT * FROM cards ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT ? OFFSET ?`;
   return db().prepare(sql).all(...params, limit, offset) as Card[];
 }
@@ -437,6 +489,100 @@ export function markExpiredCards(): number {
   const info = db().prepare(`UPDATE cards SET status = 'expired' WHERE status = 'activated' AND expires_at IS NOT NULL AND expires_at <= ?`).run(now);
   return info.changes as number;
 }
+
+// =============================== 续费 (renewals) ===============================
+
+export interface Renewal {
+  id: number;
+  original_card_id: number;
+  renewal_card_id: number;
+  renewed_at: number;
+  before_expires_at: number;
+  after_expires_at: number;
+  added_days: number;
+  newapi_token_id: number;
+  renewal_ip: string | null;
+}
+
+/**
+ * 续费 — 必须事务执行,确保如下操作要么全部成功要么全部失败:
+ *   1. INSERT renewals(...)  审计链 (UNIQUE renewal_card_id 防同卡续两次)
+ *   2. UPDATE cards SET expires_at=after_expires_at WHERE id = original_card_id
+ *   3. UPDATE cards SET status='activated', activated_at=now,
+ *                       expires_at=after_expires_at,
+ *                       newapi_token_id=<orig token>, newapi_token_key=<orig key>,
+ *                       activator_ip=<renewal_ip>, claimed_at=NULL
+ *      WHERE id = renewal_card_id AND status='activating'
+ *
+ * 调用前提:
+ *   - renewal_card 已被 claimCard 占领为 'activating'
+ *   - NewAPI token 已经成功改 expired_time = afterExpiresAt
+ *
+ * @throws 若 UNIQUE 冲突 (并发同时续费同一张) 或事务任何步骤失败
+ */
+export function applyRenewal(args: {
+  originalCardId: number;
+  renewalCardId: number;
+  beforeExpiresAt: number;
+  afterExpiresAt: number;
+  addedDays: number;
+  newapiTokenId: number;
+  newapiTokenKey: string;
+  renewalIp: string | null;
+}): number {
+  const now = Math.floor(Date.now() / 1000);
+  const tx = db().transaction(() => {
+    const r = db().prepare(`
+      INSERT INTO renewals (original_card_id, renewal_card_id, renewed_at,
+                            before_expires_at, after_expires_at, added_days,
+                            newapi_token_id, renewal_ip)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      args.originalCardId, args.renewalCardId, now,
+      args.beforeExpiresAt, args.afterExpiresAt, args.addedDays,
+      args.newapiTokenId, args.renewalIp,
+    );
+    if (r.changes !== 1) throw new Error('renewal insert failed');
+
+    const u1 = db().prepare(
+      `UPDATE cards SET expires_at = ?, status = 'activated' WHERE id = ?`,
+    ).run(args.afterExpiresAt, args.originalCardId);
+    if (u1.changes !== 1) throw new Error('original card update failed');
+
+    const u2 = db().prepare(`
+      UPDATE cards
+      SET status = 'activated',
+          activated_at = ?,
+          expires_at = ?,
+          newapi_token_id = ?,
+          newapi_token_key = ?,
+          activator_ip = ?,
+          claimed_at = NULL
+      WHERE id = ? AND status = 'activating'
+    `).run(now, args.afterExpiresAt, args.newapiTokenId, args.newapiTokenKey,
+      args.renewalIp, args.renewalCardId);
+    if (u2.changes !== 1) throw new Error('renewal card finalize failed (state changed?)');
+
+    return Number(r.lastInsertRowid);
+  });
+  return tx() as number;
+}
+
+/** 查某张续费卡是否已经被用过 (UNIQUE 约束已经保证,这是显式查询用) */
+export function getRenewalByRenewalCardId(renewalCardId: number): Renewal | null {
+  return (db()
+    .prepare('SELECT * FROM renewals WHERE renewal_card_id = ?')
+    .get(renewalCardId) as Renewal) || null;
+}
+
+/** 列出某原卡的所有续费记录 (按时间倒序) */
+export function listRenewalsForOriginal(originalCardId: number): Renewal[] {
+  return db()
+    .prepare('SELECT * FROM renewals WHERE original_card_id = ? ORDER BY renewed_at DESC')
+    .all(originalCardId) as Renewal[];
+}
+
+// ===============================================================================
 
 /** 简单的 IP 速率限制:每分钟最多 N 次 */
 export function checkRateLimit(key: string, max: number, windowSec = 60): boolean {

@@ -3,8 +3,17 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PLANS } from '@/lib/plans';
+import type { Plan } from '@/lib/plans';
 import { CATEGORY_LIST } from '@/lib/categories';
+import type { CategoryMeta } from '@/lib/categories';
 import { Sparkles, KeyRound, Loader2, ShieldCheck, Zap, ShoppingCart } from 'lucide-react';
+
+function planDescriptionForCategory(cat: CategoryMeta, plan: Plan): string {
+  if (cat.id === 'gpt' && plan.id === '7d') {
+    return '一周高强度使用,$1000 额度跑满为止';
+  }
+  return plan.description;
+}
 
 export default function HomePage() {
   const [code, setCode] = useState('');
@@ -57,86 +66,86 @@ export default function HomePage() {
 
         {/* 激活 / 购买 双栏 */}
         <div className="mx-auto mt-12 grid max-w-4xl gap-6 lg:grid-cols-2">
-        {/* 激活卡 */}
-        <form
-          onSubmit={handleRedeem}
-          className="rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur"
-        >
-          <label className="block text-sm font-medium text-slate-300">
-            <KeyRound className="mr-1.5 inline h-4 w-4" />
-            卡密
-          </label>
-          <input
-            type="text"
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            placeholder={`${CATEGORY_LIST.map((c) => c.prefix).join(' / ')}- XXXX-XXXX-XXXX`}
-            className="mt-2 w-full rounded-lg border border-slate-600 bg-slate-950 px-4 py-3 font-mono tracking-wider text-slate-100 placeholder:text-slate-600 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-            {CATEGORY_LIST.map((c) => (
-              <span key={c.id}>
-                <span
-                  className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${c.badgeClass}`}
-                >
-                  {c.prefix}-
-                </span>{' '}
-                {c.label}
-              </span>
-            ))}
-          </p>
-          {error && (
-            <div className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-              {error}
-            </div>
-          )}
-          <button
-            type="submit"
-            disabled={loading || !code}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-3 font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-700"
+          {/* 激活卡 */}
+          <form
+            onSubmit={handleRedeem}
+            className="rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur"
           >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                正在开通...
-              </>
-            ) : (
-              <>
-                <Zap className="h-4 w-4" />
-                立即激活
-              </>
-            )}
-          </button>
-          <p className="mt-3 text-center text-xs text-slate-500">
-            激活后可重新输入同一卡密查看 API Key,直到到期
-          </p>
-        </form>
-
-        {/* 购买卡 — 跳转到 qxvx.cn 店铺 */}
-        <a
-          href="https://pay.qxvx.cn/shop/codex"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="group flex flex-col justify-between rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur transition hover:border-emerald-500/60"
-        >
-          <div>
-            <div className="flex items-center gap-2 text-emerald-400">
-              <ShoppingCart className="h-4 w-4" />
-              <span className="text-sm font-medium">还没有卡密?</span>
-            </div>
-            <h3 className="mt-3 text-2xl font-bold text-slate-100">立即购买卡密</h3>
-            <p className="mt-2 text-sm text-slate-400">
-              跳转自动发卡店铺,支付宝 / 微信扫码付款,卡密自动到手,回本页粘贴激活即可使用。
+            <label className="block text-sm font-medium text-slate-300">
+              <KeyRound className="mr-1.5 inline h-4 w-4" />
+              卡密
+            </label>
+            <input
+              type="text"
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              placeholder={`${CATEGORY_LIST.map((c) => c.prefix).join(' / ')}- XXXX-XXXX-XXXX`}
+              className="mt-2 w-full rounded-lg border border-slate-600 bg-slate-950 px-4 py-3 font-mono tracking-wider text-slate-100 placeholder:text-slate-600 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+              {CATEGORY_LIST.map((c) => (
+                <span key={c.id}>
+                  <span
+                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${c.badgeClass}`}
+                  >
+                    {c.prefix}-
+                  </span>{' '}
+                  {c.label}
+                </span>
+              ))}
             </p>
-          </div>
-          <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-3 font-medium text-white transition group-hover:bg-emerald-600">
-            <ShoppingCart className="h-4 w-4" />
-            前往购买店铺
-            <span aria-hidden="true">→</span>
-          </div>
-        </a>
+            {error && (
+              <div className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                {error}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={loading || !code}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-3 font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-700"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  正在开通...
+                </>
+              ) : (
+                <>
+                  <Zap className="h-4 w-4" />
+                  立即激活
+                </>
+              )}
+            </button>
+            <p className="mt-3 text-center text-xs text-slate-500">
+              激活后可重新输入同一卡密查看 API Key,直到到期
+            </p>
+          </form>
+
+          {/* 购买卡 — 跳转到 qxvx.cn 店铺 */}
+          <a
+            href="https://pay.qxvx.cn/shop/codex"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group flex flex-col justify-between rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur transition hover:border-emerald-500/60"
+          >
+            <div>
+              <div className="flex items-center gap-2 text-emerald-400">
+                <ShoppingCart className="h-4 w-4" />
+                <span className="text-sm font-medium">还没有卡密?</span>
+              </div>
+              <h3 className="mt-3 text-2xl font-bold text-slate-100">立即购买卡密</h3>
+              <p className="mt-2 text-sm text-slate-400">
+                跳转自动发卡店铺,支付宝 / 微信扫码付款,卡密自动到手,回本页粘贴激活即可使用。
+              </p>
+            </div>
+            <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-3 font-medium text-white transition group-hover:bg-emerald-600">
+              <ShoppingCart className="h-4 w-4" />
+              前往购买店铺
+              <span aria-hidden="true">→</span>
+            </div>
+          </a>
         </div>
 
         {/* 套餐展示 — 按分类分组 */}
@@ -153,7 +162,7 @@ export default function HomePage() {
               </div>
               <p className="mt-1 text-sm text-slate-400">{cat.description}</p>
               <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                {PLANS.map((plan) => (
+                {PLANS.filter((p) => !p.internal).map((plan) => (
                   <div
                     key={`${cat.id}-${plan.id}`}
                     className="rounded-xl border border-slate-700 bg-slate-900/40 p-6 transition hover:border-brand-500/50"
@@ -162,7 +171,7 @@ export default function HomePage() {
                       <span className="text-lg font-semibold text-slate-100">{plan.label}</span>
                       <span className="font-mono text-xs text-slate-500">{plan.days}d</span>
                     </div>
-                    <p className="mt-2 text-sm text-slate-400">{plan.description}</p>
+                    <p className="mt-2 text-sm text-slate-400">{planDescriptionForCategory(cat, plan)}</p>
                     <ul className="mt-4 space-y-1.5 text-sm text-slate-300">
                       {cat.defaultModels.split(',').map((m) => (
                         <li key={m} className="flex items-center gap-2">
