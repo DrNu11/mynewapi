@@ -346,6 +346,12 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 
+	// 🆕 v10: MiniMax 兼容 — 合并多个 system message 为一个,且放在最前面
+	// MiniMax-M2.x 系列只接受 0/1 个 system,且必须在 user/assistant 之前(错误码 2013)
+	if strings.Contains(info.ChannelBaseUrl, "minimaxi.com") {
+		request.Messages = normalizeSystemForMinimax(request.Messages)
+	}
+
 	return request, nil
 }
 
@@ -426,6 +432,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
+		if isJSONRequest(c) {
+			return request, nil
+		}
 
 		var requestBody bytes.Buffer
 		writer := multipart.NewWriter(&requestBody)
@@ -551,6 +560,13 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	}
 }
 
+func isJSONRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	return strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json")
+}
+
 // detectImageMimeType determines the MIME type based on the file extension
 func detectImageMimeType(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))
@@ -593,7 +609,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	if info.RelayMode == relayconstant.RelayModeAudioTranscription ||
 		info.RelayMode == relayconstant.RelayModeAudioTranslation ||
-		info.RelayMode == relayconstant.RelayModeImagesEdits {
+		(info.RelayMode == relayconstant.RelayModeImagesEdits && !isJSONRequest(c)) {
 		return channel.DoFormRequest(a, c, info, requestBody)
 	} else if info.RelayMode == relayconstant.RelayModeRealtime {
 		return channel.DoWssRequest(a, c, info, requestBody)
@@ -623,7 +639,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 			usage, err = OaiResponsesHandler(c, info, resp)
 		}
 	case relayconstant.RelayModeResponsesCompact:
-		usage, err = OaiResponsesCompactionHandler(c, resp)
+		usage, err = OaiResponsesCompactionHandler(c, info, resp)
 	default:
 		if info.IsStream {
 			usage, err = OaiStreamHandler(c, info, resp)

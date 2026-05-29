@@ -1,0 +1,81 @@
+# Clash Meta / mihomo 配置 — 单节点 Hysteria2-207
+# 含 22 端口直连 + 代理服务器 IP 直连防回环
+# 适用客户端: Clash Verge Rev / mihomo / FlClash / Shadowrocket / Stash
+
+mixed-port: 7897
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+geodata-mode: true
+geox-url:
+  geoip: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb"
+  geosite: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat"
+
+dns:
+  enable: true
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "*.lan"
+    - "localhost.ptlogin2.qq.com"
+  nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  fallback:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+
+proxies:
+  - name: "Hysteria2-207"
+    type: hysteria2
+    server: 207.244.243.12
+    port: 36713
+    password: QKBEoj0FhaXZzda9Xi7Qv1Nq
+    sni: 207.244.243.12
+    skip-cert-verify: true
+    up: "100 Mbps"
+    down: "1000 Mbps"
+
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - Hysteria2-207
+      - AUTO
+      - DIRECT
+
+  - name: "AUTO"
+    type: url-test
+    proxies:
+      - Hysteria2-207
+    url: "http://www.gstatic.com/generate_204"
+    interval: 300
+
+rules:
+  # === 防回环：代理服务器自己的 IP 必须走直连 ===
+  - IP-CIDR,207.244.243.12/32,DIRECT,no-resolve
+  - IP-CIDR,107.174.155.17/32,DIRECT,no-resolve
+
+  # === SSH 22 端口全局直连 ===
+  - DST-PORT,22,DIRECT
+
+  # === 局域网直连 ===
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+
+  # === 国内域名 / IP 直连 ===
+  - DOMAIN-SUFFIX,cn,DIRECT
+  - DOMAIN-KEYWORD,baidu,DIRECT
+  - DOMAIN-KEYWORD,taobao,DIRECT
+  - DOMAIN-KEYWORD,alipay,DIRECT
+  - DOMAIN-KEYWORD,jd,DIRECT
+  - DOMAIN-KEYWORD,bilibili,DIRECT
+  - GEOIP,CN,DIRECT,no-resolve
+
+  # === 其余走代理 ===
+  - MATCH,PROXY

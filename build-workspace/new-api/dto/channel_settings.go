@@ -7,6 +7,9 @@ type ChannelSettings struct {
 	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt           string `json:"system_prompt,omitempty"`
 	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+	// ResponsesViaChat: 当 true 时,/v1/responses 请求会被转换为 /v1/chat/completions
+	// 发给上游(用于只支持 chat-completions 的 OpenAI 兼容上游,如 MiniMax)。
+	ResponsesViaChat bool `json:"responses_via_chat,omitempty"`
 }
 
 type VertexKeyType string

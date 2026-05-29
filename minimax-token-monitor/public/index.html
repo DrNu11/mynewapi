@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MiniMax Token Plan Monitor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>MiniMax Token Plan</h1>
+          <p id="statusText">等待首次刷新</p>
+        </div>
+        <div class="actions">
+          <button id="refreshBtn" type="button">刷新</button>
+          <button id="settingsBtn" type="button">设置</button>
+        </div>
+      </section>
+
+      <section class="quota">
+        <div class="quota-header">
+          <div>
+            <div class="eyebrow">文本生成</div>
+            <h2>5 小时</h2>
+          </div>
+          <div class="metric">
+            <span id="fiveHourPercent">--%</span>
+            <small>已使用</small>
+          </div>
+        </div>
+        <div class="bar"><div id="fiveHourBar" class="bar-fill"></div></div>
+        <div class="quota-grid">
+          <div><span>用量</span><strong id="fiveHourUsage">-- / --</strong></div>
+          <div><span>剩余</span><strong id="fiveHourRemaining">--</strong></div>
+          <div><span>窗口</span><strong id="fiveHourRange">--</strong></div>
+          <div><span>重置</span><strong id="fiveHourReset">--</strong></div>
+        </div>
+      </section>
+
+      <section class="quota secondary">
+        <div class="quota-header">
+          <div>
+            <div class="eyebrow">文本生成</div>
+            <h2>本周配额</h2>
+          </div>
+          <div class="metric">
+            <span id="weeklyPercent">--%</span>
+            <small>已使用</small>
+          </div>
+        </div>
+        <div class="bar"><div id="weeklyBar" class="bar-fill"></div></div>
+        <div class="quota-grid">
+          <div><span>用量</span><strong id="weeklyUsage">-- / --</strong></div>
+          <div><span>剩余</span><strong id="weeklyRemaining">--</strong></div>
+          <div><span>窗口</span><strong id="weeklyRange">--</strong></div>
+          <div><span>重置</span><strong id="weeklyReset">--</strong></div>
+        </div>
+      </section>
+
+      <section id="settingsPanel" class="settings hidden">
+        <div class="settings-head">
+          <h2>实时采集</h2>
+          <button id="closeSettingsBtn" type="button">关闭</button>
+        </div>
+        <p class="hint">把下面这段拖到书签栏，或在 MiniMax 页面控制台粘贴运行一次。它会让 MiniMax 页面每 30 秒把额度推送到本机。</p>
+        <textarea id="bookmarkletText" readonly></textarea>
+        <textarea id="cookieInput" placeholder="备用方案：也可以粘贴 MiniMax 登录态 Cookie 或 cURL。实时采集成功后不需要填这里。"></textarea>
+        <div class="settings-actions">
+          <button id="saveCookieBtn" type="button">保存并刷新</button>
+          <span id="configText"></span>
+        </div>
+      </section>
+
+      <section class="log">
+        <h2>状态</h2>
+        <pre id="rawOutput">{}</pre>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

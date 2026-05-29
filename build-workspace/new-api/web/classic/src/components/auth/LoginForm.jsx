@@ -189,9 +189,9 @@ const LoginForm = () => {
     }
     setWechatCodeSubmitLoading(true);
     try {
-      const res = await API.get('/api/oauth/wechat', {
-        params: { code: inputs.wechat_verification_code },
-      });
+      const res = await API.get(
+        `/api/oauth/wechat?code=${inputs.wechat_verification_code}`,
+      );
       const { success, message, data } = res.data;
       if (success) {
         userDispatch({ type: 'login', payload: data });
@@ -503,38 +503,26 @@ const LoginForm = () => {
   const renderOAuthOptions = () => {
     return (
       <div className='flex flex-col items-center'>
-        <div className='w-full max-w-md animate-[fadeIn_0.6s_ease-out]'>
-          <div className='mb-6 flex flex-col items-center justify-center gap-3 text-center'>
-            <img
-              src={logo}
-              alt='Logo'
-              className='h-12 w-12 rounded-2xl object-cover shadow-lg shadow-emerald-500/20'
-            />
-            <div>
-              <Title heading={3} className='!mb-1 !text-white'>
-                {systemName}
-              </Title>
-              <Text className='!text-white/50'>{t('欢迎回来')}</Text>
-            </div>
+        <div className='w-full max-w-md'>
+          <div className='flex items-center justify-center mb-6 gap-2'>
+            <img src={logo} alt='Logo' className='h-10 rounded-full' />
+            <Title heading={3} className='!text-gray-800'>
+              {systemName}
+            </Title>
           </div>
 
-          <Card className='login-apple-card border-0 !rounded-[32px] overflow-hidden'>
-            <div className='flex justify-center pt-7 pb-2'>
-              <Title heading={3} className='!text-white'>
+          <Card className='border-0 !rounded-2xl overflow-hidden'>
+            <div className='flex justify-center pt-6 pb-2'>
+              <Title heading={3} className='text-gray-800 dark:text-gray-200'>
                 {t('登 录')}
               </Title>
             </div>
-            {searchParams.get('expired') && (
-              <div className='mx-6 mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800'>
-                {t('未登录或登录已过期，请重新登录')}
-              </div>
-            )}
-            <div className='px-6 py-8'>
+            <div className='px-2 py-8'>
               <div className='space-y-3'>
                 {status.wechat_login && (
                   <Button
                     theme='outline'
-                    className='login-apple-button w-full h-12 flex items-center justify-center !rounded-2xl border border-white/70 transition-all duration-300'
+                    className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors'
                     type='tertiary'
                     icon={
                       <Icon svg={<WeChatIcon />} style={{ color: '#07C160' }} />
@@ -549,7 +537,7 @@ const LoginForm = () => {
                 {status.github_oauth && (
                   <Button
                     theme='outline'
-                    className='login-apple-button w-full h-12 flex items-center justify-center !rounded-2xl border border-white/70 transition-all duration-300'
+                    className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors'
                     type='tertiary'
                     icon={<IconGithubLogo size='large' />}
                     onClick={handleGitHubClick}
@@ -563,7 +551,7 @@ const LoginForm = () => {
                 {status.discord_oauth && (
                   <Button
                     theme='outline'
-                    className='login-apple-button w-full h-12 flex items-center justify-center !rounded-2xl border border-white/70 transition-all duration-300'
+                    className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors'
                     type='tertiary'
                     icon={
                       <SiDiscord
@@ -584,7 +572,7 @@ const LoginForm = () => {
                 {status.oidc_enabled && (
                   <Button
                     theme='outline'
-                    className='login-apple-button w-full h-12 flex items-center justify-center !rounded-2xl border border-white/70 transition-all duration-300'
+                    className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors'
                     type='tertiary'
                     icon={<OIDCIcon style={{ color: '#1877F2' }} />}
                     onClick={handleOIDCClick}
@@ -597,7 +585,7 @@ const LoginForm = () => {
                 {status.linuxdo_oauth && (
                   <Button
                     theme='outline'
-                    className='login-apple-button w-full h-12 flex items-center justify-center !rounded-2xl border border-white/70 transition-all duration-300'
+                    className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors'
                     type='tertiary'
                     icon={
                       <LinuxDoIcon
@@ -620,7 +608,7 @@ const LoginForm = () => {
                     <Button
                       key={provider.slug}
                       theme='outline'
-                      className='login-apple-button w-full h-12 flex items-center justify-center !rounded-2xl border border-white/70 transition-all duration-300'
+                      className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors'
                       type='tertiary'
                       icon={getOAuthProviderIcon(provider.icon || '', 20)}
                       onClick={() => handleCustomOAuthClick(provider)}
@@ -644,7 +632,7 @@ const LoginForm = () => {
                 {status.passkey_login && passkeySupported && (
                   <Button
                     theme='outline'
-                    className='login-apple-button w-full h-12 flex items-center justify-center !rounded-2xl border border-white/70 transition-all duration-300'
+                    className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors'
                     type='tertiary'
                     icon={<IconKey size='large' />}
                     onClick={handlePasskeyLogin}
@@ -661,7 +649,7 @@ const LoginForm = () => {
                 <Button
                   theme='solid'
                   type='primary'
-                  className='w-full h-12 flex items-center justify-center !rounded-2xl bg-gray-950 text-white shadow-lg shadow-gray-950/15 transition-all duration-300 hover:-translate-y-0.5 hover:bg-gray-800'
+                  className='w-full h-12 flex items-center justify-center bg-black text-white !rounded-full hover:bg-gray-800 transition-colors'
                   icon={<IconMail size='large' />}
                   onClick={handleEmailLoginClick}
                   loading={emailLoginLoading}
@@ -676,7 +664,7 @@ const LoginForm = () => {
                     checked={agreedToTerms}
                     onChange={(e) => setAgreedToTerms(e.target.checked)}
                   >
-                    <Text size='small' className='text-white/58'>
+                    <Text size='small' className='text-gray-600'>
                       {t('我已阅读并同意')}
                       {hasUserAgreement && (
                         <>
@@ -731,38 +719,24 @@ const LoginForm = () => {
   const renderEmailLoginForm = () => {
     return (
       <div className='flex flex-col items-center'>
-        <div className='w-full max-w-md animate-[fadeIn_0.6s_ease-out]'>
-          <div className='mb-6 flex flex-col items-center justify-center gap-3 text-center'>
-            <img
-              src={logo}
-              alt='Logo'
-              className='h-12 w-12 rounded-2xl object-cover shadow-lg shadow-emerald-500/20'
-            />
-            <div>
-              <Title heading={3} className='!mb-1 !text-white'>
-                {systemName}
-              </Title>
-              <Text className='!text-white/50'>{t('安全登录控制台')}</Text>
-            </div>
+        <div className='w-full max-w-md'>
+          <div className='flex items-center justify-center mb-6 gap-2'>
+            <img src={logo} alt='Logo' className='h-10 rounded-full' />
+            <Title heading={3}>{systemName}</Title>
           </div>
 
-          <Card className='login-apple-card border-0 !rounded-[32px] overflow-hidden'>
-            <div className='flex justify-center pt-7 pb-2'>
-              <Title heading={3} className='!text-white'>
+          <Card className='border-0 !rounded-2xl overflow-hidden'>
+            <div className='flex justify-center pt-6 pb-2'>
+              <Title heading={3} className='text-gray-800 dark:text-gray-200'>
                 {t('登 录')}
               </Title>
             </div>
-            {searchParams.get('expired') && (
-              <div className='mx-6 mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800'>
-                {t('未登录或登录已过期，请重新登录')}
-              </div>
-            )}
-            <div className='px-6 py-8'>
+            <div className='px-2 py-8'>
               {status.passkey_login && passkeySupported && (
                 <Button
                   theme='outline'
                   type='tertiary'
-                  className='login-apple-button mb-4 w-full h-12 flex items-center justify-center !rounded-2xl border border-white/70 transition-all duration-300'
+                  className='w-full h-12 flex items-center justify-center !rounded-full border border-gray-200 hover:bg-gray-50 transition-colors mb-4'
                   icon={<IconKey size='large' />}
                   onClick={handlePasskeyLogin}
                   loading={passkeyLoading}
@@ -796,7 +770,7 @@ const LoginForm = () => {
                       checked={agreedToTerms}
                       onChange={(e) => setAgreedToTerms(e.target.checked)}
                     >
-                      <Text size='small' className='text-white/58'>
+                      <Text size='small' className='text-gray-600'>
                         {t('我已阅读并同意')}
                         {hasUserAgreement && (
                           <>
@@ -831,7 +805,7 @@ const LoginForm = () => {
                 <div className='space-y-2 pt-2'>
                   <Button
                     theme='solid'
-                    className='w-full !rounded-2xl'
+                    className='w-full !rounded-full'
                     type='primary'
                     htmlType='submit'
                     onClick={handleSubmit}
@@ -846,7 +820,7 @@ const LoginForm = () => {
                   <Button
                     theme='borderless'
                     type='tertiary'
-                    className='w-full !rounded-2xl'
+                    className='w-full !rounded-full'
                     onClick={handleResetPasswordClick}
                     loading={resetPasswordLoading}
                   >
@@ -865,7 +839,7 @@ const LoginForm = () => {
                     <Button
                       theme='outline'
                       type='tertiary'
-                      className='w-full !rounded-2xl'
+                      className='w-full !rounded-full'
                       onClick={handleOtherLoginOptionsClick}
                       loading={otherLoginOptionsLoading}
                     >
@@ -973,7 +947,7 @@ const LoginForm = () => {
   };
 
   return (
-    <div className='login-apple-shell relative overflow-hidden flex min-h-screen items-center justify-center px-4 py-16 sm:px-6 lg:px-8'>
+    <div className='relative overflow-hidden bg-gray-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8'>
       {/* 背景模糊晕染球 */}
       <div
         className='blur-ball blur-ball-indigo'
@@ -983,7 +957,7 @@ const LoginForm = () => {
         className='blur-ball blur-ball-teal'
         style={{ top: '50%', left: '-120px' }}
       />
-      <div className='w-full max-w-sm'>
+      <div className='w-full max-w-sm mt-[60px]'>
         {showEmailLogin ||
         !hasOAuthLoginOptions
           ? renderEmailLoginForm()

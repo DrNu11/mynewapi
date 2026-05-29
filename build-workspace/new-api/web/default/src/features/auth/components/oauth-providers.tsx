@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -121,16 +139,16 @@ export function OAuthProviders({
     <div className={cn('space-y-3', className)}>
       <div className='relative'>
         <div className='absolute inset-0 flex items-center'>
-          <span className='w-full border-t border-white/10' />
+          <span className='w-full border-t' />
         </div>
-        <div className='relative flex justify-center text-xs uppercase tracking-[0.2em]'>
-          <span className='bg-[#050505]/80 px-3 text-white/32 backdrop-blur'>
+        <div className='relative flex justify-center text-xs uppercase'>
+          <span className='bg-background text-muted-foreground px-2'>
             {t('Or continue with')}
           </span>
         </div>
       </div>
 
-      <div className='flex flex-col gap-2.5'>
+      <div className='flex flex-col gap-2'>
         {providerButtons.map(
           ({ key, label, onClick, icon, disabled: extraDisabled }) => (
             <Button
@@ -139,7 +157,7 @@ export function OAuthProviders({
               type='button'
               disabled={disabled || isLoading || extraDisabled}
               onClick={onClick}
-              className='h-12 w-full justify-center gap-2 rounded-2xl border-white/10 bg-white/[0.065] font-medium text-white/82 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition-all duration-300 hover:-translate-y-0.5 hover:border-white/18 hover:bg-white/[0.11]'
+              className='h-11 w-full justify-center gap-2 rounded-lg'
             >
               {icon}
               {label}

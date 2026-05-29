@@ -9,6 +9,7 @@ import {
 } from '@/lib/db';
 import { isValidCodeFormat, normalizeCode } from '@/lib/codes';
 import { createTokenAndGetKey } from '@/lib/newapi';
+import { PLAN_BY_ID, isPlanId, type Plan } from '@/lib/plans';
 import {
   CATEGORIES,
   categoryFromCode,
@@ -20,6 +21,13 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const GPT_WEEKLY_QUOTA_USD = 1000;
+
+function quotaForCard(category: Category | null, planId: string, planMeta?: Plan): number | undefined {
+  if (category === 'gpt' && planId === '7d') return GPT_WEEKLY_QUOTA_USD;
+  return planMeta?.quotaUSD;
+}
 
 function clientIp(req: NextRequest): string {
   const xff = req.headers.get('x-forwarded-for');
@@ -78,7 +86,8 @@ export async function POST(req: NextRequest) {
   const baseUrl = categoryMeta ? `${baseRoot}${categoryMeta.baseUrlSuffix}` : legacyBase;
 
   // 已激活: 直接返回已绑定的 key (允许客户重新查看)
-  if (card.status === 'activated' && card.newapi_token_key && card.expires_at) {
+  // 注意:noExpire 套餐 expires_at=NULL,不能作为守护条件,只看 status+token_key
+  if (card.status === 'activated' && card.newapi_token_key) {
     return NextResponse.json({
       success: true,
       already_activated: true,
@@ -130,10 +139,17 @@ export async function POST(req: NextRequest) {
   }
 
   // 调 NewAPI 创建 token,model_limits 严格限定为该 category 模型
+  // quotaUSD: GPT 周卡固定 $1000;套餐若设置(如 30d-unlimited=$2000),token 用 unlimited_quota=false + remain_quota
+  // noExpire: 套餐若设置(如 30d-unlimited),NewAPI expired_time=-1 + cards.expires_at=NULL
+  // 自定义天数 plan(如 '15d')不在 PLAN_BY_ID 里 → 都走旧逻辑(吃 root 池 + 30 天后过期)
   const modelLimits = models.join(',');
+  const planMeta = isPlanId(card.plan) ? PLAN_BY_ID[card.plan] : undefined;
+  const planQuotaUSD = quotaForCard(cat, card.plan, planMeta);
+  const planNoExpire = planMeta?.noExpire ?? false;
+  const planGroup = planMeta?.newapiGroup; // e.g. '30d-unlimited' → 'pro'
   let tokenInfo;
   try {
-    tokenInfo = await createTokenAndGetKey(code, card.plan_days, modelLimits);
+    tokenInfo = await createTokenAndGetKey(code, card.plan_days, modelLimits, planQuotaUSD, planNoExpire, planGroup);
   } catch (e: any) {
     console.error('[redeem] NewAPI 调用失败', e);
     // 释放占领,允许重试
@@ -144,8 +160,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // activating → activated
-  activateCard(code, tokenInfo.id, tokenInfo.key, tokenInfo.expiredAt);
+  // activating → activated;noExpire 套餐 expires_at 写 NULL,markExpiredCards 跳过
+  const cardExpiresAt = planNoExpire ? null : tokenInfo.expiredAt;
+  activateCard(code, tokenInfo.id, tokenInfo.key, cardExpiresAt);
 
   return NextResponse.json({
     success: true,
@@ -160,7 +177,7 @@ export async function POST(req: NextRequest) {
       has_codex: categoryMeta?.hasCodex ?? false,
       rph: card.rph,
       activated_at: Math.floor(Date.now() / 1000),
-      expires_at: tokenInfo.expiredAt,
+      expires_at: cardExpiresAt,
       models,
     },
   });

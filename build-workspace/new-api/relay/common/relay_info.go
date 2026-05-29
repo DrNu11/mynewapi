@@ -120,6 +120,15 @@ type RelayInfo struct {
 	RelayFormat            types.RelayFormat
 	SendResponseCount      int
 	ReceivedResponseCount  int
+	// v25: 跨 chunk 品牌词识别 buffer — sendStreamData 累积 delta.content,
+	// 滑动窗口扫描 stripProviderBranding,流结束时 flush 到 finish chunk
+	StreamBrandingBuffer string
+	// v32: minimax narrative 思考独白剥离状态 — buffer 累积后检测开头 narrative + \n\n 终止，
+	// 只在开头剥一次成功之后就不再剥，避免误伤后续正常回答
+	NarrativeStripDone bool
+	// v34: narrative 剥成功后下一次输出 flag — 一次性把整 buffer 输出，
+	// 绕过 keep-tail 30 字符限制（避免实际回答被切碎留在 buffer 永不输出）
+	JustStrippedNarrative bool
 	FinalPreConsumedQuota  int // 最终预消耗的配额
 	// ForcePreConsume 为 true 时禁用 BillingSession 的信任额度旁路，
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，

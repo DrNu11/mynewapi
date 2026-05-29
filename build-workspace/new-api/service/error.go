@@ -114,6 +114,9 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		// General format error (OpenAI, Anthropic, Gemini, etc.)
 		oaiError := errResponse.TryToOpenAIError()
 		if oaiError != nil {
+			// v24: 防伪装通道上游错误消息透传露馅
+			// (MiniMax 2056/2064 等错误会绕过 relay/channel/openai/*.go 的 6 个 sanitize 位点从这里走)
+			sanitizeUpstreamErrorMessage(oaiError)
 			newApiErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
 			if showBodyWhenFail {
 				newApiErr.Err = buildErrWithBody(newApiErr.Error())
@@ -218,4 +221,77 @@ func TaskErrorFromAPIError(apiErr *types.NewAPIError) *dto.TaskError {
 		StatusCode: apiErr.StatusCode,
 		Error:      apiErr.Err,
 	}
+}
+
+// sanitizeUpstreamErrorMessage 轻量版上游错误消息 sanitize,专门拦截伪装通道的露馅点。
+//
+// 背景: relay/channel/openai/helper.go 里的 SanitizeUpstreamError 只能拦住 6 个下游适配器里
+// 明确调用的位点；但 NewAPI 的通用错误适配入口是 service.RelayErrorHandler,它不会走
+// channel-specific 逻辑,所以需要在这里多一道 sanitize。
+//
+// 设计原则:
+//  1. 仅对含 MiniMax 特征指纹关键词的错误生效 — 避免误伤普通 OpenAI / Claude / Gemini 渠道
+//  2. case 列表与 relay/channel/openai/helper.go 保持同步 — 以后可重构提取为公共函数
+//  3. 默认分支用通用文案兜底,不透传原文
+func sanitizeUpstreamErrorMessage(oaiError *types.OpenAIError) {
+	if oaiError == nil {
+		return
+	}
+	msg := oaiError.Message
+	if !containsUpstreamLeakFingerprint(msg) {
+		return
+	}
+
+	switch {
+	case strings.Contains(msg, "does not support max tokens") || (strings.Contains(msg, "max_tokens") && strings.Contains(msg, "exceed")):
+		oaiError.Message = "单次生成长度超出限制,请减小 max_tokens 后重试"
+		oaiError.Type = "invalid_request_error"
+	case strings.Contains(msg, "(2013)") || strings.Contains(msg, "context window exceeds limit"):
+		oaiError.Message = "请求过长,请缩短上下文后重试"
+		oaiError.Type = "context_length_exceeded"
+	case strings.Contains(msg, "(2003)") || strings.Contains(msg, "invalid params"):
+		oaiError.Message = "请求参数错误,请检查输入"
+		oaiError.Type = "invalid_request_error"
+	case strings.Contains(msg, "(1004)") || strings.Contains(msg, "authentication failed"):
+		oaiError.Message = "服务暂时不可用,请稍后重试"
+		oaiError.Type = "service_unavailable"
+	case strings.Contains(msg, "(1002)") || strings.Contains(msg, "rate limit"):
+		oaiError.Message = "请求频率过高,请稍后重试"
+		oaiError.Type = "rate_limit_exceeded"
+	case strings.Contains(msg, "(2064)") || strings.Contains(msg, "请求拥挤") || strings.Contains(msg, "highspeed模型"):
+		oaiError.Message = "当前人流拥挤,稍等一下"
+		oaiError.Type = "service_unavailable"
+	case strings.Contains(msg, "(2056)") || strings.Contains(msg, "usage limit exceeded") || strings.Contains(msg, "Token Plan"):
+		oaiError.Message = "服务暂时不可用,请稍后重试"
+		oaiError.Type = "service_unavailable"
+	case strings.Contains(msg, "(1008)") || strings.Contains(msg, "insufficient balance"):
+		oaiError.Message = "服务暂时不可用,请稍后重试"
+		oaiError.Type = "service_unavailable"
+	default:
+		// 含特征但未识别具体错误码: 用兜底文案避免原文透传
+		oaiError.Message = "服务暂时不可用,请稍后重试"
+		oaiError.Type = "service_unavailable"
+	}
+}
+
+// containsUpstreamLeakFingerprint 检测错误消息是否含 MiniMax / NewAPI 内部特征指纹。
+// 只有指纹命中才走 sanitize 逻辑,避免误伤普通 OpenAI / Claude / Gemini 透传通道。
+func containsUpstreamLeakFingerprint(msg string) bool {
+	keys := []string{
+		// MiniMax 错误码括号
+		"(2056)", "(2064)", "(2013)", "(2003)",
+		"(1002)", "(1004)", "(1008)",
+		// MiniMax 品牌 / 套餐 / 域名
+		"MiniMax", "minimaxi", "Token Plan", "highspeed",
+		// MiniMax 错误中文文案
+		"请求拥挤", "极速版套餐",
+		// 上下文超限 / 限额耗尽
+		"context window exceeds limit", "usage limit exceeded",
+	}
+	for _, k := range keys {
+		if strings.Contains(msg, k) {
+			return true
+		}
+	}
+	return false
 }

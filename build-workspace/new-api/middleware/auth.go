@@ -153,6 +153,14 @@ func authHelper(c *gin.Context, minRole int) {
 	c.Set("user_group", session.Get("group"))
 	c.Set("use_access_token", useAccessToken)
 
+	// v23: 演示账号检测 — 读 user.setting.is_demo 标记（走 redis 缓存）
+	// 后续 BlockDemoUser middleware 通过 c.GetBool("is_demo") 决定是否拦截
+	if userId, ok := id.(int); ok && userId > 0 {
+		if userCache, err := model.GetUserCache(userId); err == nil && userCache != nil {
+			c.Set("is_demo", userCache.GetSetting().IsDemo)
+		}
+	}
+
 	c.Next()
 }
 
@@ -182,6 +190,24 @@ func AdminAuth() func(c *gin.Context) {
 func RootAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleRootUser)
+	}
+}
+
+// BlockDemoUser v23: 演示账号 API 访问拦截。
+// 必须挂在 UserAuth/AdminAuth/RootAuth 之后（依赖 c.Get("is_demo")）。
+// 用于保护渠道、系统设置、用户管理等敏感 admin API，
+// 演示账号即便有 admin role 也无法通过这些 API 看到上游伪装信息或修改配置。
+func BlockDemoUser() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		if c.GetBool("is_demo") {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"message": "演示账号无权访问此功能",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
 	}
 }
 

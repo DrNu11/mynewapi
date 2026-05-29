@@ -30,7 +30,14 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/about", controller.GetAbout)
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent)
-		apiRouter.GET("/pricing", middleware.TryUserAuth(), controller.GetPricing)
+		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)
+		perfMetricsRoute := apiRouter.Group("/perf-metrics")
+		perfMetricsRoute.Use(middleware.HeaderNavModulePublicOrUserAuth("pricing"))
+		{
+			perfMetricsRoute.GET("/summary", controller.GetPerfMetricsSummary)
+			perfMetricsRoute.GET("", controller.GetPerfMetrics)
+		}
+		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)
 		apiRouter.GET("/reset_password", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.SendPasswordResetEmail)
 		apiRouter.POST("/user/reset", middleware.CriticalRateLimit(), controller.ResetPassword)
@@ -115,7 +122,7 @@ func SetApiRouter(router *gin.Engine) {
 			}
 
 			adminRoute := userRoute.Group("/")
-			adminRoute.Use(middleware.AdminAuth())
+			adminRoute.Use(middleware.AdminAuth(), middleware.BlockDemoUser())
 			{
 				adminRoute.GET("/", controller.GetAllUsers)
 				adminRoute.GET("/topup", controller.GetAllTopUps)
@@ -149,7 +156,7 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestCreemPay)
 		}
 		subscriptionAdminRoute := apiRouter.Group("/subscription/admin")
-		subscriptionAdminRoute.Use(middleware.AdminAuth())
+		subscriptionAdminRoute.Use(middleware.AdminAuth(), middleware.BlockDemoUser())
 		{
 			subscriptionAdminRoute.GET("/plans", controller.AdminListSubscriptionPlans)
 			subscriptionAdminRoute.POST("/plans", controller.AdminCreateSubscriptionPlan)
@@ -170,10 +177,11 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		apiRouter.POST("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		optionRoute := apiRouter.Group("/option")
-		optionRoute.Use(middleware.RootAuth())
+		optionRoute.Use(middleware.RootAuth(), middleware.BlockDemoUser())
 		{
 			optionRoute.GET("/", controller.GetOptions)
 			optionRoute.PUT("/", controller.UpdateOption)
+			optionRoute.POST("/payment_compliance", controller.ConfirmPaymentCompliance)
 			optionRoute.GET("/channel_affinity_cache", controller.GetChannelAffinityCacheStats)
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
@@ -182,7 +190,7 @@ func SetApiRouter(router *gin.Engine) {
 
 		// Custom OAuth provider management (root only)
 		customOAuthRoute := apiRouter.Group("/custom-oauth-provider")
-		customOAuthRoute.Use(middleware.RootAuth())
+		customOAuthRoute.Use(middleware.RootAuth(), middleware.BlockDemoUser())
 		{
 			customOAuthRoute.POST("/discovery", controller.FetchCustomOAuthDiscovery)
 			customOAuthRoute.GET("/", controller.GetCustomOAuthProviders)
@@ -192,7 +200,7 @@ func SetApiRouter(router *gin.Engine) {
 			customOAuthRoute.DELETE("/:id", controller.DeleteCustomOAuthProvider)
 		}
 		performanceRoute := apiRouter.Group("/performance")
-		performanceRoute.Use(middleware.RootAuth())
+		performanceRoute.Use(middleware.RootAuth(), middleware.BlockDemoUser())
 		{
 			performanceRoute.GET("/stats", controller.GetPerformanceStats)
 			performanceRoute.DELETE("/disk_cache", controller.ClearDiskCache)
@@ -202,13 +210,13 @@ func SetApiRouter(router *gin.Engine) {
 			performanceRoute.DELETE("/logs", controller.CleanupLogFiles)
 		}
 		ratioSyncRoute := apiRouter.Group("/ratio_sync")
-		ratioSyncRoute.Use(middleware.RootAuth())
+		ratioSyncRoute.Use(middleware.RootAuth(), middleware.BlockDemoUser())
 		{
 			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels)
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
 		}
 		channelRoute := apiRouter.Group("/channel")
-		channelRoute.Use(middleware.AdminAuth())
+		channelRoute.Use(middleware.AdminAuth(), middleware.BlockDemoUser())
 		{
 			channelRoute.GET("/", controller.GetAllChannels)
 			channelRoute.GET("/search", controller.SearchChannels)
@@ -275,7 +283,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		redemptionRoute := apiRouter.Group("/redemption")
-		redemptionRoute.Use(middleware.AdminAuth())
+		redemptionRoute.Use(middleware.AdminAuth(), middleware.BlockDemoUser())
 		{
 			redemptionRoute.GET("/", controller.GetAllRedemptions)
 			redemptionRoute.GET("/search", controller.SearchRedemptions)
@@ -287,10 +295,10 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		logRoute := apiRouter.Group("/log")
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
-		logRoute.DELETE("/", middleware.AdminAuth(), controller.DeleteHistoryLogs)
+		logRoute.DELETE("/", middleware.AdminAuth(), middleware.BlockDemoUser(), controller.DeleteHistoryLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
-		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
+		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), middleware.BlockDemoUser(), controller.GetChannelAffinityUsageCacheStats)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
@@ -305,13 +313,13 @@ func SetApiRouter(router *gin.Engine) {
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)
 		}
 		groupRoute := apiRouter.Group("/group")
-		groupRoute.Use(middleware.AdminAuth())
+		groupRoute.Use(middleware.AdminAuth(), middleware.BlockDemoUser())
 		{
 			groupRoute.GET("/", controller.GetGroups)
 		}
 
 		prefillGroupRoute := apiRouter.Group("/prefill_group")
-		prefillGroupRoute.Use(middleware.AdminAuth())
+		prefillGroupRoute.Use(middleware.AdminAuth(), middleware.BlockDemoUser())
 		{
 			prefillGroupRoute.GET("/", controller.GetPrefillGroups)
 			prefillGroupRoute.POST("/", controller.CreatePrefillGroup)
@@ -330,7 +338,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		vendorRoute := apiRouter.Group("/vendors")
-		vendorRoute.Use(middleware.AdminAuth())
+		vendorRoute.Use(middleware.AdminAuth(), middleware.BlockDemoUser())
 		{
 			vendorRoute.GET("/", controller.GetAllVendors)
 			vendorRoute.GET("/search", controller.SearchVendors)
@@ -341,7 +349,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		modelsRoute := apiRouter.Group("/models")
-		modelsRoute.Use(middleware.AdminAuth())
+		modelsRoute.Use(middleware.AdminAuth(), middleware.BlockDemoUser())
 		{
 			modelsRoute.GET("/sync_upstream/preview", controller.SyncUpstreamPreview)
 			modelsRoute.POST("/sync_upstream", controller.SyncUpstreamModels)
@@ -356,7 +364,7 @@ func SetApiRouter(router *gin.Engine) {
 
 		// Deployments (model deployment management)
 		deploymentsRoute := apiRouter.Group("/deployments")
-		deploymentsRoute.Use(middleware.AdminAuth())
+		deploymentsRoute.Use(middleware.AdminAuth(), middleware.BlockDemoUser())
 		{
 			deploymentsRoute.GET("/settings", controller.GetModelDeploymentSettings)
 			deploymentsRoute.POST("/settings/test-connection", controller.TestIoNetConnection)

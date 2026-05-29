@@ -46,14 +46,6 @@ func GetUserQuotaDates(c *gin.Context) {
 	userId := c.GetInt("id")
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	// 判断时间跨度是否超过 1 年(原 30 天太严,前端 'week' 模式 + end+1h 缓冲会踩边界,导致用户首屏 toast)
-	if endTimestamp-startTimestamp > 31536000 {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "时间跨度不能超过 1 年",
-		})
-		return
-	}
 	dates, err := model.GetQuotaDataByUserId(userId, startTimestamp, endTimestamp)
 	if err != nil {
 		common.ApiError(c, err)

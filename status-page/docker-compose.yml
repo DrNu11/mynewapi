@@ -1,0 +1,38 @@
+services:
+  status-page:
+    build: .
+    image: nassa-status-page:latest
+    container_name: nassa-status-page
+    restart: unless-stopped
+    ports:
+      - "8200:8000"
+    environment:
+      MYSQL_HOST: newapi-prod-mysql-1
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: new-api
+      REALTIME_WINDOW: "300"
+      HISTORY_HOURS: "48"
+      BUCKET_SECONDS: "3600"
+      REFRESH_SECONDS: "30"
+      MINIMAX_TOKEN_PLANS_JSON: ${MINIMAX_TOKEN_PLANS_JSON:-}
+      MINIMAX_REFRESH_SECONDS: ${MINIMAX_REFRESH_SECONDS:-30}
+      MINIMAX_TIMEOUT_SECONDS: ${MINIMAX_TIMEOUT_SECONDS:-10}
+      MOCK_MODE: "0"
+    volumes:
+      - ./data:/app/data
+      # 静态前端 bind mount,改完 index.html 立刻生效无需重启
+      - ./static:/app/static:ro
+      # 只读挂载 docker socket(让容器能 tail 兄弟容器日志)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    extra_hosts:
+      # 让容器能用 host.docker.internal 访问 host 上的服务(CPA/cards/host-network 容器)
+      - "host.docker.internal:host-gateway"
+    networks:
+      # 加入 newapi 同一网络,直接用容器名访问 mysql
+      - newapi-prod-net
+
+networks:
+  newapi-prod-net:
+    external: true

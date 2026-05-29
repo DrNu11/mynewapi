@@ -185,6 +185,57 @@ function makeAuditAccumulator(
 }
 
 /**
+ * 流式 SSE 心跳 — 防止 Cloudflare 524 (origin response timeout)。
+ *
+ * 触发场景:MiniMax M2.7 等 reasoning 模型在大 prompt(>50K tokens)推理阶段,
+ * frt(首字节)可能 60-100s,期间 SSE 流没有任何 chunk。Cloudflare 默认 100s
+ * 没活动就主动 524 切断,客户看到 origin_response_timeout。
+ *
+ * 解法:每 intervalMs 没收到上游 chunk 就向客户注入一行 SSE comment(`: heartbeat\n\n`)。
+ * SSE 协议规定以 ":" 开头是注释,OpenAI / Anthropic / 标准 EventSource 都自动忽略,
+ * 不会被当成 data。Cloudflare 边缘看到流"在动"就不会触发 524。
+ *
+ * 仅对 SSE 响应启用(content-type: text/event-stream)。
+ */
+function makeHeartbeatTransform(intervalMs = 25_000): TransformStream<Uint8Array, Uint8Array> {
+  const enc = new TextEncoder();
+  const HEARTBEAT = enc.encode(': heartbeat\n\n');
+  let lastActivityAt = Date.now();
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let ctrlRef: TransformStreamDefaultController<Uint8Array> | null = null;
+  let closed = false;
+  // 检查频率:intervalMs / 4,但下限 1s 上限 5s,避免空转 CPU
+  const checkPeriodMs = Math.min(5_000, Math.max(1_000, Math.floor(intervalMs / 4)));
+  return new TransformStream<Uint8Array, Uint8Array>({
+    start(controller) {
+      ctrlRef = controller;
+      timer = setInterval(() => {
+        if (closed || !ctrlRef) return;
+        if (Date.now() - lastActivityAt >= intervalMs) {
+          try {
+            ctrlRef.enqueue(HEARTBEAT);
+            lastActivityAt = Date.now();
+          } catch {
+            // controller 已 close 或 errored
+          }
+        }
+      }, checkPeriodMs);
+    },
+    transform(chunk, controller) {
+      controller.enqueue(chunk);
+      lastActivityAt = Date.now();
+    },
+    flush() {
+      closed = true;
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    },
+  });
+}
+
+/**
  * 把响应流里所有 "model":"..." 改写成客户请求的模型名,伪装上游真实模型。
  * 用于 NewAPI 后台做了"模型重定向"(如 claude-sonnet-4-6 → gpt-5.4)时,
  * 让客户响应看起来仍然是他请求的 Claude 模型,不会穿帮。
@@ -481,6 +532,17 @@ async function handle(req: NextRequest, pathParts: string[]) {
   }
   if (requestedModel && body) {
     body = body.pipeThrough(makeModelRewriter(requestedModel)) as ReadableStream<Uint8Array>;
+  }
+  // 12. 流式响应加 SSE 心跳 — 防止 Cloudflare 524 (origin response timeout)。
+  //     MiniMax M2.7 等 reasoning 模型在大 prompt(>50K tokens)推理时,frt 可能 60-100s,
+  //     期间没有任何 SSE chunk,Cloudflare 默认 100s 没活动就主动 524 切断。
+  //     此 transform 每 25s 没收到上游 chunk 时主动注入 SSE comment,让 CF 看到流活着。
+  if (body && isStream) {
+    try {
+      body = body.pipeThrough(makeHeartbeatTransform(25_000)) as ReadableStream<Uint8Array>;
+    } catch (e) {
+      console.error('[v1-proxy] heartbeat pipe failed (non-fatal):', e);
+    }
   }
 
   return new Response(body, {

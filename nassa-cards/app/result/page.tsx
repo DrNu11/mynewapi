@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles } from 'lucide-react';
+import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2 } from 'lucide-react';
+import { formatDaysCN } from '@/lib/plans';
 
 interface ResultData {
   api_key: string;
@@ -14,7 +15,8 @@ interface ResultData {
   has_codex: boolean;
   rph: number;
   activated_at: number;
-  expires_at: number;
+  /** null = 永不过期(尊享套餐,只受额度约束) */
+  expires_at: number | null;
   models: string[];
 }
 
@@ -176,6 +178,15 @@ export default function ResultPage() {
   const [os, setOs] = useState<Os>('mac');
   const [origin, setOrigin] = useState<string>('');
   const [usage, setUsage] = useState<UsageState | null>(null);
+  // 续费状态
+  const [renewCode, setRenewCode] = useState('');
+  const [renewLoading, setRenewLoading] = useState(false);
+  const [renewError, setRenewError] = useState<string | null>(null);
+  const [renewSuccess, setRenewSuccess] = useState<{
+    added_days: number;
+    before_expires_at: number;
+    after_expires_at: number;
+  } | null>(null);
   // 每秒 tick,让 "X 秒前" 显示自动滚动
   const [nowSec, setNowSec] = useState<number>(Math.floor(Date.now() / 1000));
   useEffect(() => {
@@ -282,6 +293,45 @@ export default function ResultPage() {
     }
   };
 
+  async function handleRenew(e: React.FormEvent) {
+    e.preventDefault();
+    if (!data?.api_key) return;
+    const code = renewCode.trim().toUpperCase();
+    if (!code) {
+      setRenewError('请输入续费卡密');
+      return;
+    }
+    setRenewError(null);
+    setRenewSuccess(null);
+    setRenewLoading(true);
+    try {
+      const res = await fetch('/api/renew', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sk: data.api_key, code }),
+      });
+      const body = await res.json();
+      if (!body.success) {
+        setRenewError(body.message || '续费失败');
+        setRenewLoading(false);
+        return;
+      }
+      const newData = { ...data, expires_at: body.data.after_expires_at };
+      setData(newData);
+      sessionStorage.setItem('nc_result', JSON.stringify(newData));
+      setRenewSuccess({
+        added_days: body.data.added_days,
+        before_expires_at: body.data.before_expires_at,
+        after_expires_at: body.data.after_expires_at,
+      });
+      setRenewCode('');
+      setRenewLoading(false);
+    } catch (err) {
+      setRenewError(err instanceof Error ? err.message : '网络错误');
+      setRenewLoading(false);
+    }
+  }
+
   if (!data) return null;
 
   const copy = async (text: string, label: string) => {
@@ -290,10 +340,15 @@ export default function ResultPage() {
     setTimeout(() => setCopied(null), 1500);
   };
 
-  const expiresDate = new Date(data.expires_at * 1000);
-  const remainHours = Math.max(0, (data.expires_at - Math.floor(Date.now() / 1000)) / 3600);
-  const remainText =
-    remainHours > 48
+  // expires_at 为 null = 尊享套餐(永不过期,只受额度约束)
+  const noExpire = data.expires_at === null;
+  const expiresDate = noExpire ? null : new Date(data.expires_at! * 1000);
+  const remainHours = noExpire
+    ? Infinity
+    : Math.max(0, (data.expires_at! - Math.floor(Date.now() / 1000)) / 3600);
+  const remainText = noExpire
+    ? '不过期 (额度用完为止)'
+    : remainHours > 48
       ? `${Math.floor(remainHours / 24)} 天 ${Math.floor(remainHours % 24)} 小时`
       : `${remainHours.toFixed(1)} 小时`;
 
@@ -313,7 +368,7 @@ export default function ResultPage() {
         </div>
 
         <h1 className="mt-4 text-3xl font-bold text-slate-100">
-          {data.category_label ? `${data.category_label} · ` : ''}{data.plan_days} 天畅用已开通
+          {data.category_label ? `${data.category_label} · ` : ''}{formatDaysCN(data.plan_days)}畅用已开通
         </h1>
         <p className="mt-2 text-sm text-slate-400">
           请妥善保存以下信息,粘贴到 Cherry Studio / Claude Code / Cursor 等工具即可使用
@@ -424,11 +479,11 @@ export default function ResultPage() {
                   到期时间
                 </div>
                 <div className="mt-3 font-mono text-xl font-medium text-slate-100">
-                  {expiresDate.toLocaleString('zh-CN', { hour12: false })}
+                  {expiresDate ? expiresDate.toLocaleString('zh-CN', { hour12: false }) : '永久'}
                 </div>
                 <div className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-sm font-medium text-emerald-300">
                   <Zap className="h-3.5 w-3.5" />
-                  剩余 {remainText}
+                  {noExpire ? remainText : `剩余 ${remainText}`}
                 </div>
               </div>
               <a
@@ -976,6 +1031,115 @@ claude`}
             )}
           </div>
         </details>
+
+        {/* ============== 一键续费 panel — 仅有期限的卡显示 ============== */}
+        {!noExpire && data.category && (
+          <div className="mt-8 rounded-2xl border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-amber-500/10 p-6 shadow-xl shadow-amber-500/5">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-amber-500/20 p-2.5">
+                <RotateCw className="h-5 w-5 text-amber-300" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 text-base font-bold text-amber-100">
+                  觉得换 key 很麻烦?这里一键续费
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-amber-200/80">
+                  原 sk-key <span className="font-mono">不变</span> · 时长直接叠加到当前到期时间 · {' '}
+                  仅限<span className="font-semibold text-amber-200">同套餐</span>(
+                  {data.category_label})卡密
+                </p>
+              </div>
+            </div>
+
+            {renewSuccess ? (
+              <div className="mt-5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-5">
+                <div className="flex items-center gap-2 text-base font-semibold text-emerald-200">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                  续费成功 · 新增 {formatDaysCN(renewSuccess.added_days)}
+                </div>
+                <div className="mt-3 space-y-1.5 text-sm">
+                  <div className="flex items-baseline justify-between border-b border-slate-800 pb-1.5">
+                    <span className="text-slate-400">原到期时间</span>
+                    <span className="font-mono text-slate-300 line-through decoration-slate-500">
+                      {new Date(renewSuccess.before_expires_at * 1000).toLocaleString('zh-CN', { hour12: false })}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-slate-400">新到期时间</span>
+                    <span className="font-mono text-emerald-300 font-semibold">
+                      {new Date(renewSuccess.after_expires_at * 1000).toLocaleString('zh-CN', { hour12: false })}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setRenewSuccess(null);
+                    setRenewError(null);
+                    setRenewCode('');
+                  }}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-700"
+                >
+                  <RotateCw className="h-3.5 w-3.5" />
+                  再续一次
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleRenew} className="mt-5">
+                <label className="block text-sm font-medium text-slate-300">
+                  <KeyRound className="mr-1.5 inline h-4 w-4 text-amber-400" />
+                  续费卡密
+                </label>
+                <input
+                  type="text"
+                  value={renewCode}
+                  onChange={(e) => setRenewCode(e.target.value.toUpperCase())}
+                  placeholder={`${data.category === 'deepseek' ? 'DE' : data.category === 'gpt' ? 'GP' : 'CL'}-XXXX-XXXX-XXXX`}
+                  className="mt-2 w-full rounded-lg border border-slate-600 bg-slate-950 px-4 py-3 font-mono tracking-wider text-slate-100 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={renewLoading}
+                />
+                {renewError && (
+                  <div className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                    {renewError}
+                  </div>
+                )}
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={renewLoading || !renewCode}
+                    className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-amber-500/30 transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:shadow-none"
+                  >
+                    {renewLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        正在续费...
+                      </>
+                    ) : (
+                      <>
+                        <RotateCw className="h-4 w-4" />
+                        立即续费
+                      </>
+                    )}
+                  </button>
+                  <a
+                    href="https://pay.qxvx.cn/shop/codex"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-amber-300/80 hover:text-amber-200"
+                  >
+                    没有续费卡? 去店铺购买
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+                <p className="mt-3 text-[11px] leading-relaxed text-amber-200/60">
+                  时间叠加规则:仍在有效期 → 在原到期时间上 + N 天;已过期 → 从现在 + N 天复活。
+                  续费卡用一次即作废,不可重复使用。
+                </p>
+              </form>
+            )}
+          </div>
+        )}
 
         <div className="mt-8 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
           ⚠ 卡密一经激活即开始计时。如需重新查看,可在首页重新输入同一卡密(到期前有效)。

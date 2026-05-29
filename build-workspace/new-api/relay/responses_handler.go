@@ -71,24 +71,23 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	adaptor.Init(info)
 
-	// 反向协议转换:codex 客户发 /v1/responses,但 channel 只支持 chat completions(如 mimo)
-	// 触发条件:
-	//   1. RelayMode 是 RelayModeResponses(不含 ResponsesCompact)
-	//   2. 没开 PassThrough(否则透传)
-	//   3. policy 检查通过(global 设置 + channel + model 命中)
-	if info.RelayMode == relayconstant.RelayModeResponses &&
-		!model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
-		!info.ChannelSetting.PassThroughBodyEnabled &&
-		service.ShouldResponsesUseChatCompletionsGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
-		usage, newApiErr := responsesViaChatCompletions(c, info, adaptor, request)
-		if newApiErr != nil {
-			return newApiErr
+	// 🆕 v9: ResponsesViaChat fallback path
+	// 当 channel.setting.responses_via_chat=true 且 ApiType=OpenAI 时,
+	// 把 /v1/responses 请求转成 /v1/chat/completions 发上游
+	// (用于只支持 chat-completions 的 OpenAI 兼容上游,如 MiniMax)
+	if info.ChannelSetting.ResponsesViaChat && info.ApiType == appconstant.APITypeOpenAI && info.RelayMode != relayconstant.RelayModeResponsesCompact {
+		usage, newAPIErr := responsesViaChatCompletions(c, info, adaptor, request)
+		if newAPIErr != nil {
+			statusCodeMappingStr := c.GetString("status_code_mapping")
+			service.ResetStatusCode(newAPIErr, statusCodeMappingStr)
+			return newAPIErr
 		}
-		// 计费(跟 ResponsesHelper 末尾保持一致)
-		if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
-			service.PostAudioConsumeQuota(c, info, usage, "")
-		} else {
-			service.PostTextConsumeQuota(c, info, usage, nil)
+		if usage != nil {
+			if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
+				service.PostAudioConsumeQuota(c, info, usage, "")
+			} else {
+				service.PostTextConsumeQuota(c, info, usage, nil)
+			}
 		}
 		return nil
 	}

@@ -32,24 +32,10 @@ func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channe
 	return false
 }
 
-// ResponsesToChatCompletionsPolicy 是 ChatCompletionsToResponsesPolicy 的反向。
-// 用于:codex 客户发 /v1/responses,但选中的 channel(如 mimo)只支持
-// /v1/chat/completions 时,触发反向协议转换:
-//
-//	客户 OpenAIResponsesRequest
-//	  → openaicompat.ResponsesRequestToChatCompletionsRequest
-//	  → 上游 chat completions
-//	  → openaicompat.ChatCompletionsResponseToResponsesResponse / OaiChatToResponsesStreamHandler
-//	  → 客户拿到正常的 responses 响应
-//
-// 配置项:启用范围(ALL/特定 channel ID/特定 channel type)+ 模型 regex 白名单。
-type ResponsesToChatCompletionsPolicy = ChatCompletionsToResponsesPolicy
-
 type GlobalSettings struct {
 	PassThroughRequestEnabled        bool                             `json:"pass_through_request_enabled"`
 	ThinkingModelBlacklist           []string                         `json:"thinking_model_blacklist"`
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
-	ResponsesToChatCompletionsPolicy ResponsesToChatCompletionsPolicy `json:"responses_to_chat_completions_policy"`
 }
 
 // 默认配置
@@ -62,10 +48,6 @@ var defaultOpenaiSettings = GlobalSettings{
 	ChatCompletionsToResponsesPolicy: ChatCompletionsToResponsesPolicy{
 		Enabled:     false,
 		AllChannels: true,
-	},
-	ResponsesToChatCompletionsPolicy: ResponsesToChatCompletionsPolicy{
-		Enabled:     false,
-		AllChannels: false,
 	},
 }
 

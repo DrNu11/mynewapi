@@ -33,6 +33,24 @@ func HandleStreamFormat(c *gin.Context, info *relaycommon.RelayInfo, data string
 	return nil
 }
 
+// maskUpstreamModelInData 当请求经过 model_mapping 时，将响应数据中的下游真实模型名
+// 替换为客户端原始请求模型名，实现"严格伪装"——客户端响应里只看见自己请求的模型。
+// 仅当 IsModelMapped 且 origin/upstream 模型名不同的时候才替换。
+func maskUpstreamModelInData(data string, info *relaycommon.RelayInfo) string {
+	if info == nil || !info.IsModelMapped {
+		return data
+	}
+	if info.OriginModelName == "" || info.UpstreamModelName == "" {
+		return data
+	}
+	if info.UpstreamModelName == info.OriginModelName {
+		return data
+	}
+	return strings.ReplaceAll(data,
+		`"model":"`+info.UpstreamModelName+`"`,
+		`"model":"`+info.OriginModelName+`"`)
+}
+
 func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo) error {
 	var streamResponse dto.ChatCompletionsStreamResponse
 	if err := common.Unmarshal(common.StringToByteSlice(data), &streamResponse); err != nil {
@@ -201,7 +219,12 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		if info.ShouldIncludeUsage && !containStreamUsage {
-			response := helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)
+			finalModel := model
+			// 严格伪装：流式末尾 usage 帧也要用客户端原始模型名
+			if info != nil && info.IsModelMapped && info.OriginModelName != "" && info.UpstreamModelName != "" && info.UpstreamModelName != info.OriginModelName {
+				finalModel = info.OriginModelName
+			}
+			response := helper.GenerateFinalUsageResponse(responseId, createAt, finalModel, *usage)
 			response.SetSystemFingerprint(systemFingerprint)
 			helper.ObjectData(c, response)
 		}

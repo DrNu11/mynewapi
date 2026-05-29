@@ -27,11 +27,18 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
-	// Strip upstream-identifying fields (model name / reasoning content /
-	// system_fingerprint) before any downstream branch sees the chunk. We do
-	// this once here so every code path below — direct passthrough, force
-	// format, and thinking-to-content — emits the sanitized payload.
-	data = HideUpstreamInString(c, data, info)
+	// 严格伪装：把每帧 SSE 数据里的下游模型名替换为客户端原始请求模型名
+	data = maskUpstreamModelInData(data, info)
+
+	// v16: stream 单 chunk narrative 剥离 — 仅在前 5 个 chunk 内尝试,
+	// 避免整段对话都被误删。chunk content 整段是 narrative 风格时,把 content 值清空。
+	if info.IsModelMapped && info.SendResponseCount <= 5 && info.OriginModelName != info.UpstreamModelName {
+		data = streamChunkNarrativePattern.ReplaceAllString(data, `${1}""`)
+	}
+
+	// v25: stream content 跨 chunk 品牌词缓冲扫描 — 解决 "MiniMax-M2.7" 等
+	// 完整品牌词被 SSE chunk 切碎后单 chunk strings.ReplaceAll 永远匹配不到的根本问题
+	data = SanitizeStreamChunkContent(data, info)
 
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
@@ -96,9 +103,16 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 
 		// Convert reasoning content to regular content if any
 		if len(choice.Delta.GetReasoningContent()) > 0 {
-			lastStreamResponse.Choices[i].Delta.SetContentString(choice.Delta.GetReasoningContent())
-			lastStreamResponse.Choices[i].Delta.ReasoningContent = nil
-			lastStreamResponse.Choices[i].Delta.Reasoning = nil
+			if info.IsModelMapped {
+				// v36: 伪装渠道不要把 reasoning_content 塞 content 字段，
+				// 否则思考独白会通过 content 漏给客户。直接清空 reasoning 字段
+				lastStreamResponse.Choices[i].Delta.ReasoningContent = nil
+				lastStreamResponse.Choices[i].Delta.Reasoning = nil
+			} else {
+				lastStreamResponse.Choices[i].Delta.SetContentString(choice.Delta.GetReasoningContent())
+				lastStreamResponse.Choices[i].Delta.ReasoningContent = nil
+				lastStreamResponse.Choices[i].Delta.Reasoning = nil
+			}
 		} else if !hasThinkingContent && !hasContent {
 			// flush thinking content
 			lastStreamResponse.Choices[i].Delta.ReasoningContent = nil
@@ -231,7 +245,18 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		SanitizeUpstreamError(oaiError, info)
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	}
+
+	// 严格伪装：把响应中的下游模型名替换为客户端原始请求模型名
+	if info.IsModelMapped && info.OriginModelName != "" && info.UpstreamModelName != "" && info.UpstreamModelName != info.OriginModelName {
+		simpleResponse.Model = info.OriginModelName
+		responseBody = []byte(strings.ReplaceAll(string(responseBody),
+			`"model":"`+info.UpstreamModelName+`"`,
+			`"model":"`+info.OriginModelName+`"`))
+		responseBody = []byte(stripProviderBranding(string(responseBody)))
+		responseBody = []byte(stripClaudeFacadeBranding(string(responseBody), info))
 	}
 
 	for _, choice := range simpleResponse.Choices {
@@ -300,12 +325,12 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		responseBody = geminiRespStr
 	}
 
-	// Strip upstream-identifying fields from the OpenAI-shaped response body
-	// before flushing to the client. This is a no-op when the relay output
-	// has been converted into Claude/Gemini schemas above (those bodies do
-	// not contain a top-level `model` field that would be rewritten).
-	if info.RelayFormat == types.RelayFormatOpenAI {
-		responseBody = HideUpstreamInJSON(c, responseBody, info)
+	// v14: 兜底剥离 — forceFormat / Claude / Gemini 格式重 marshal simpleResponse 时,
+	// Content 字段里的 <think> 标签和 reasoning_content 字段会再次出现(因为前面 stripProviderBranding
+	// 只修改了 responseBody 字节流,没动 simpleResponse 结构体)。最后再 strip 一次保证干净。
+	if info.IsModelMapped && info.OriginModelName != "" && info.UpstreamModelName != "" && info.UpstreamModelName != info.OriginModelName {
+		responseBody = []byte(stripProviderBranding(string(responseBody)))
+		responseBody = []byte(stripClaudeFacadeBranding(string(responseBody), info))
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)

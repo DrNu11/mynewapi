@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo } from 'react';
+import React, { useContext, useMemo } from 'react';
 import { Empty, Descriptions } from '@douyinfe/semi-ui';
 import CardTable from '../../common/ui/CardTable';
 import {
@@ -25,6 +25,7 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import { getLogsColumns } from './UsageLogsColumnDefs';
+import { UserContext } from '../../../context/User';
 
 const LogsTable = (logsData) => {
   const {
@@ -48,6 +49,19 @@ const LogsTable = (logsData) => {
     COLUMN_KEYS,
   } = logsData;
 
+  // v25: 演示账号脱敏 — 从 user setting 读 is_demo，过滤掉「渠道」列
+  const [userState] = useContext(UserContext);
+  const isDemoUser = useMemo(() => {
+    try {
+      const setting = userState?.user?.setting;
+      if (!setting) return false;
+      const parsed = typeof setting === 'string' ? JSON.parse(setting) : setting;
+      return parsed?.is_demo === true;
+    } catch (e) {
+      return false;
+    }
+  }, [userState?.user?.setting]);
+
   // Get all columns
   const allColumns = useMemo(() => {
     return getLogsColumns({
@@ -70,13 +84,18 @@ const LogsTable = (logsData) => {
   ]);
 
   // Filter columns based on visibility settings
+  // v25: 演示账号额外过滤掉 CHANNEL 列（连列头都不显示）
   const getVisibleColumns = () => {
-    return allColumns.filter((column) => visibleColumns[column.key]);
+    return allColumns.filter((column) => {
+      if (!visibleColumns[column.key]) return false;
+      if (isDemoUser && column.key === COLUMN_KEYS.CHANNEL) return false;
+      return true;
+    });
   };
 
   const visibleColumnsList = useMemo(() => {
     return getVisibleColumns();
-  }, [visibleColumns, allColumns]);
+  }, [visibleColumns, allColumns, isDemoUser, COLUMN_KEYS]);
 
   const tableColumns = useMemo(() => {
     return compactMode

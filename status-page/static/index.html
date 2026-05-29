@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NassaAPI Status</title>
+
+  <link rel="preconnect" href="https://cdn.tailwindcss.com">
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="dns-prefetch" href="https://cdn.tailwindcss.com">
+  <link rel="dns-prefetch" href="https://unpkg.com">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    .bar-enter {
+      animation: bar-grow 0.6s ease-out forwards;
+    }
+
+    @keyframes bar-grow {
+      from {
+        transform: scaleX(0)
+      }
+
+      to {
+        transform: scaleX(1)
+      }
+    }
+
+    .card-hover {
+      transition: all 0.2s ease;
+    }
+
+    .card-hover:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(139, 107, 74, 0.08);
+    }
+
+    details summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details[open] .chevron {
+      transform: rotate(90deg);
+    }
+
+    .chevron {
+      transition: transform 0.2s ease;
+    }
+
+    .uptime-bar {
+      transition: opacity 0.15s ease, transform 0.15s ease;
+      transform-origin: bottom;
+    }
+
+    .uptime-bar:hover {
+      opacity: 0.75;
+      transform: scaleY(1.3);
+    }
+  </style>
+</head>
+
+<body class="min-h-screen bg-gradient-to-br from-[#fdfbf7] to-[#f4ecd8] text-stone-800">
+  <div id="root"></div>
+
+  <script type="module">
+    import { html, render, useState, useEffect, useMemo } from 'https://unpkg.com/htm/preact/standalone.module.js';
+
+    function fmtUptime(sec) {
+      if (!sec) return '0m';
+      const d = Math.floor(sec / 86400);
+      const h = Math.floor((sec % 86400) / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      if (d > 0) return d + 'd ' + h + 'h';
+      if (h > 0) return h + 'h ' + m + 'm';
+      return m + 'm';
+    }
+    function fmtMs(ms) {
+      if (ms == null) return '-';
+      if (ms < 1000) return Math.round(ms) + 'ms';
+      return (ms / 1000).toFixed(1) + 's';
+    }
+    function fmtTokens(n) {
+      if (!n) return '0';
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return String(n);
+    }
+    function fmtBytes(b) {
+      if (!b) return '0 B';
+      if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+      if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
+      if (b >= 1e3) return (b / 1e3).toFixed(1) + ' KB';
+      return b + ' B';
+    }
+    function fmtSpeed(bps) {
+      if (!bps) return '0 B/s';
+      if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' MB/s';
+      if (bps >= 1e3) return (bps / 1e3).toFixed(1) + ' KB/s';
+      return bps + ' B/s';
+    }
+    function statusColor(r) {
+      if (r >= 95) return 'emerald';
+      if (r >= 80) return 'amber';
+      return 'rose';
+    }
+
+    function Bar({ percent, label, value, color }) {
+      const c = color || (percent > 85 ? 'rose' : percent > 60 ? 'amber' : 'emerald');
+      return html`<div class="mt-2.5">
+    <div class="flex justify-between text-xs mb-1"><span class="text-stone-500">${label}</span><span class="font-mono font-semibold text-stone-700">${value}</span></div>
+    <div class="w-full bg-[#f0e8d5] rounded-full h-1.5 overflow-hidden">
+      <div class="h-1.5 rounded-full bar-enter bg-${c}-500" style="width:${Math.min(100, percent)}%"></div>
+    </div>
+  </div>`;
+    }
+
+    function Badge({ ok, text }) {
+      return html`<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${ok ? 'bg-emerald-50/80 text-emerald-700 ring-1 ring-emerald-200/80' : 'bg-rose-50/80 text-rose-700 ring-1 ring-rose-200/80'}">${ok ? '●' : '○'} ${text}</span>`;
+    }
+
+    function MiniStat({ label, value, sub }) {
+      return html`<div class="min-w-0"><div class="text-xs text-stone-500 truncate">${label}</div><div class="text-lg font-bold text-stone-800 truncate">${value}</div>${sub ? html`<div class="text-xs text-stone-400 truncate">${sub}</div>` : null}</div>`;
+    }
+
+    const minimaxErrorLabels = {
+      auth_expired: '登录态失效',
+      rate_limited: '限流',
+      upstream_error: '上游异常',
+      network_error: '网络异常',
+      schema_error: '结构变化',
+      http_error: 'HTTP异常'
+    };
+
+    function MiniMaxError({ account }) {
+      const label = minimaxErrorLabels[account.error_type] || '采集失败';
+      const failures = account.consecutive_failures ? ` · 连续 ${account.consecutive_failures} 次` : '';
+      return html`<div class="text-sm bg-rose-50 border border-rose-100 rounded-lg p-3 space-y-1">
+        <div class="font-semibold text-rose-600">${label}${failures}</div>
+        <div class="text-rose-500 break-words">${account.error_detail || account.error || '暂无额度数据'}</div>
+        ${account.error_action ? html`<div class="text-xs text-stone-500">${account.error_action}</div>` : null}
+      </div>`;
+    }
+
+    function quotaColor(percent) {
+      if (percent >= 95) return '#cb2634';
+      if (percent >= 85) return '#f53f3f';
+      if (percent >= 75) return '#f97316';
+      if (percent >= 60) return '#f59e0b';
+      if (percent >= 45) return '#eab308';
+      return '#10b981';
+    }
+
+    function QuotaLine({ title, quota }) {
+      if (!quota) return null;
+      const percent = Math.max(0, Math.min(100, quota.percent || 0));
+      return html`<div class="rounded-lg bg-[#fbf8f1] p-3">
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="text-sm font-semibold text-stone-700">${title}</span>
+            <span class="text-[11px] text-stone-400 truncate">${quota.time_range || '-'}</span>
+          </div>
+          <div class="text-right flex-shrink-0">
+            <span class="font-mono text-sm font-bold" style=${{ color: quotaColor(percent) }}>${percent}%</span>
+            <span class="text-xs text-stone-400 ml-1">已用</span>
+          </div>
+        </div>
+        <div class="h-1.5 rounded-full bg-[#f0e8d5] overflow-hidden">
+          <div class="h-full rounded-full transition-all duration-300" style=${{ width: `${percent}%`, backgroundColor: quotaColor(percent) }}></div>
+        </div>
+        <div class="flex items-center justify-between gap-3 mt-2 text-xs">
+          <span class="text-stone-500">用量 <b class="font-mono text-stone-700">${fmtTokens(quota.used || 0)} / ${fmtTokens(quota.total || 0)}</b></span>
+          <span class="text-stone-400 truncate">${quota.reset_text || ''}</span>
+        </div>
+      </div>`;
+    }
+
+    function MiniMaxAccountCard({ account }) {
+      const tg = account.text_generation;
+      return html`<div class="bg-white/70 backdrop-blur-md rounded-xl p-5 border border-[#e8dec8]/70 card-hover space-y-3">
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <h3 class="font-bold text-stone-800 truncate">${account.name}</h3>
+              <${Badge} ok=${!!account.ok} text=${account.ok ? '在线' : '异常'} />
+            </div>
+            <div class="text-xs text-stone-400 mt-1 truncate">
+              ${account.ok ? `更新 ${new Date(account.updated_at).toLocaleTimeString()} · ${account.latency_ms || 0}ms` : (minimaxErrorLabels[account.error_type] || account.error || '采集失败')}
+            </div>
+          </div>
+          <div class="text-right flex-shrink-0">
+            <div class="text-xs text-stone-500">文本生成</div>
+            <div class="text-lg font-bold ${account.ok ? 'text-emerald-600' : 'text-rose-600'}">${account.ok ? 'OK' : 'ERR'}</div>
+          </div>
+        </div>
+        ${tg ? html`
+          <${QuotaLine} title="5 小时" quota=${tg.five_hour} />
+          <${QuotaLine} title="本周配额" quota=${tg.weekly} />
+        ` : html`<${MiniMaxError} account=${account} />`}
+      </div>`;
+    }
+
+    function MiniMaxSection({ data }) {
+      if (!data?.enabled) return null;
+      const summary = data.summary || {};
+      const five = summary.five_hour || {};
+      const weekly = summary.weekly || {};
+      return html`<section class="mb-8">
+        <div class="flex items-center justify-between gap-4 mb-4">
+          <h2 class="text-base font-bold text-stone-700 flex items-center gap-2">🧮 MiniMax Token Plan</h2>
+          <div class="flex items-center gap-3 text-xs text-stone-500">
+            <span>${summary.ok || 0}/${summary.total || 0} 账号在线</span>
+            ${(summary.degraded || 0) > 0 ? html`<span class="text-rose-500">${summary.degraded} 个异常</span>` : null}
+            <span>刷新 ${data.refresh_seconds || 30}s</span>
+            <span>${data.cache?.hit ? `缓存 ${data.cache.age_seconds || 0}s` : '实时'}</span>
+          </div>
+        </div>
+        <div class="bg-white/70 backdrop-blur-md rounded-xl p-5 border border-[#e8dec8]/70 mb-4">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <${MiniStat} label="账号" value=${`${summary.ok || 0}/${summary.total || 0}`} />
+            <${MiniStat} label="5小时已用" value=${five.percent == null ? '-' : `${five.percent}%`} sub=${`${fmtTokens(five.used || 0)} / ${fmtTokens(five.total || 0)}`} />
+            <${MiniStat} label="5小时剩余" value=${fmtTokens(five.remaining || 0)} />
+            <${MiniStat} label="本周已用" value=${weekly.percent == null ? '-' : `${weekly.percent}%`} sub=${`${fmtTokens(weekly.used || 0)} / ${fmtTokens(weekly.total || 0)}`} />
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          ${(data.accounts || []).map(account => html`<${MiniMaxAccountCard} key=${account.tag} account=${account} />`)}
+        </div>
+      </section>`;
+    }
+
+    function UptimeSection({ gwName, historyData }) {
+      const comp = useMemo(() => {
+        if (!historyData?.components) return null;
+        return historyData.components.find(c => c.component_type === 'gateway') ?? null;
+      }, [historyData]);
+
+      if (!comp?.points?.length) return null;
+
+      return html`
+    <div class="bg-white/70 backdrop-blur-md rounded-xl p-5 border border-[#e8dec8]/70 card-hover space-y-5">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-stone-800">${gwName}</h3>
+        <span class="text-xs text-stone-400">${historyData.hours}h 历史</span>
+      </div>
+      <${UptimeComponent} comp=${comp} bucketSec=${historyData.bucket_seconds} />
+    </div>
+  `;
+    }
+
+    function UptimeComponent({ comp, bucketSec }) {
+      const points = comp.points ?? [];
+      if (points.length === 0) return null;
+
+      const { days, uptimePct, tzOffset } = useMemo(() => {
+        const bSec = bucketSec || 3600;
+        const cols = Math.floor(86400 / bSec);
+        const tzOffset = new Date().getTimezoneOffset() * 60;
+
+        const groupedMap = new Map();
+
+        points.forEach(p => {
+          const localSecs = p.bucket_start - tzOffset;
+          const day = Math.floor(localSecs / 86400);
+          const slot = Math.floor((localSecs % 86400) / bSec);
+
+          if (!groupedMap.has(day)) {
+            const emptyBuckets = Array(cols).fill(null).map((_, i) => {
+              const start = (day * 86400) + (i * bSec) + tzOffset;
+              return { bucket_start: start, bucket_end: start + bSec, status: 'no_data' };
+            });
+            groupedMap.set(day, { day, buckets: emptyBuckets });
+          }
+
+          if (slot >= 0 && slot < cols) {
+            groupedMap.get(day).buckets[slot] = p;
+          }
+        });
+
+        let grouped = Array.from(groupedMap.values()).sort((a, b) => a.day - b.day);
+
+        if (grouped.length > 0) {
+          const minDay = grouped[0].day;
+          const maxDay = grouped[grouped.length - 1].day;
+          for (let d = minDay; d <= maxDay; d++) {
+            if (!groupedMap.has(d)) {
+              const emptyBuckets = Array(cols).fill(null).map((_, i) => {
+                const start = (d * 86400) + (i * bSec) + tzOffset;
+                return { bucket_start: start, bucket_end: start + bSec, status: 'no_data' };
+              });
+              grouped.push({ day: d, buckets: emptyBuckets });
+            }
+          }
+          grouped.sort((a, b) => a.day - b.day);
+        }
+
+        const valid = points.filter(p => p.status !== 'no_data');
+        const pct = valid.length > 0
+          ? (valid.reduce((s, p) => s + (p.status === 'operational' ? 1 : 0), 0) / valid.length * 100)
+          : 100;
+
+        return { days: grouped, uptimePct: pct, tzOffset };
+      }, [points, bucketSec]);
+
+      function getBarColor(status) {
+        switch (status) {
+          case 'operational': return '#22c55e';
+          case 'degraded': return '#eab308';
+          case 'partial_outage': return '#f97316';
+          case 'major_outage': return '#ef4444';
+          case 'no_data': return '#f4ebd8';
+          default: return '#f4ebd8';
+        }
+      }
+
+      return html`
+    <div>
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-semibold text-stone-700">${comp.display_name}</span>
+          <span class="text-xs text-stone-400">(${comp.component_type})</span>
+        </div>
+        <span class="text-xs font-mono font-semibold text-${uptimePct >= 99 ? 'emerald' : uptimePct >= 95 ? 'amber' : 'rose'}-600">
+          ${uptimePct.toFixed(2)}%
+        </span>
+      </div>
+      
+      <div class="space-y-1.5">
+        ${days.map(({ day, buckets }, di) => {
+        const dayEpoch = (day * 86400) + tzOffset;
+        const dayDate = new Date(dayEpoch * 1000);
+        const dayLabel = dayDate.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+
+        return html`
+            <div key=${di} class="flex items-center gap-2">
+              <span class="text-xs text-stone-400 w-10 flex-shrink-0 text-right">${dayLabel}</span>
+              <div class="flex-1 flex items-end gap-[2px] h-6">
+                ${buckets.map((b, bi) => html`
+                  <div
+                    key=${bi}
+                    class="uptime-bar flex-1 rounded-sm cursor-default"
+                    style="height: 100%; background-color: ${getBarColor(b.status)};"
+                    title="${new Date(b.bucket_start * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(b.bucket_end * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}\n状态: ${b.status}${b.requests_total ? '\n请求: ' + b.requests_total + ' (成功 ' + b.requests_succeeded + ')' : ''}${b.avg_latency_ms ? '\n延迟: ' + fmtMs(b.avg_latency_ms) : ''}"
+                  ></div>
+                `)}
+              </div>
+            </div>
+          `;
+      })}
+      </div>
+    </div>
+  `;
+    }
+
+    function SystemCard({ name, sys }) {
+      // sys 为 null 表示该网关不显示 VPS 卡片(同主机共享),返回 null 跳过渲染
+      if (sys === null) return null;
+      if (!sys) return html`<div class="bg-white/70 backdrop-blur-md rounded-xl p-5 border border-[#e8dec8]/70"><h3 class="font-bold text-stone-800 mb-2">${name}</h3><p class="text-sm text-rose-500">监控离线</p></div>`;
+      const cpuPct = sys.cpu_percent ?? 0;
+      const memPct = sys.memory?.percent ?? 0;
+      const diskPct = sys.disk?.percent ?? 0;
+      return html`<div class="bg-white/70 backdrop-blur-md rounded-xl p-5 border border-[#e8dec8]/70 card-hover">
+    <div class="flex items-center justify-between mb-4"><h3 class="font-bold text-stone-800">${name}</h3><span class="text-xs text-stone-400">uptime ${fmtUptime(sys.uptime_seconds || 0)}</span></div>
+    <${Bar} percent=${cpuPct} label="CPU" value=${cpuPct.toFixed(1) + '%'} />
+    <${Bar} percent=${memPct} label=${'内存 (' + fmtBytes((sys.memory?.used_mb ?? 0) * 1048576) + ' / ' + fmtBytes((sys.memory?.total_mb ?? 0) * 1048576) + ')'} value=${memPct.toFixed(1) + '%'} />
+    <${Bar} percent=${diskPct} label=${'磁盘 (' + fmtBytes((sys.disk?.used_gb ?? 0) * 1073741824) + ' / ' + fmtBytes((sys.disk?.total_gb ?? 0) * 1073741824) + ')'} value=${diskPct.toFixed(1) + '%'} />
+    <div class="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-[#e8dec8]/60 text-xs">
+      <div><span class="text-stone-500">↓ 下载</span><span class="block font-mono text-emerald-600 font-semibold">${fmtSpeed(sys.network?.rx_speed_bps ?? 0)}</span></div>
+      <div><span class="text-stone-500">↑ 上传</span><span class="block font-mono text-amber-600 font-semibold">${fmtSpeed(sys.network?.tx_speed_bps ?? 0)}</span></div>
+    </div>
+    ${sys.load ? html`<div class="text-xs text-stone-400 mt-2">Load: ${sys.load.map(l => l.toFixed(2)).join(' / ')}</div>` : null}
+  </div>`;
+    }
+
+    function NodeRow({ node }) {
+      const rate = node.attempts?.success_rate ?? 0, c = statusColor(rate);
+      const ip = node.node || '';
+      let anon = ip;
+      if (ip.includes('.')) {
+        anon = ip.replace(/^(d+.d+.d+).d+$/, '$1.*');
+      } else if (ip.includes(':')) {
+        const parts = ip.split(':');
+        if (parts.length > 3) anon = parts.slice(0, 3).join(':') + ':*:*:*';
+      }
+
+      return html`<div class="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-[#f6ebd4]/50 transition-colors text-xs">
+    <span class="${'w-1.5 h-1.5 rounded-full flex-shrink-0 ' + (node.available ? 'bg-emerald-500' : 'bg-rose-400')}"></span>
+    <span class="font-mono text-stone-700 truncate flex-1 min-w-0">${anon}</span>
+    <span class="text-stone-400 text-right w-10 flex-shrink-0">${node.attempts?.total ?? 0}</span>
+    <span class="font-mono text-right w-12 flex-shrink-0 text-${c}-600">${rate.toFixed(1)}%</span>
+    <span class="text-stone-400 text-right w-14 flex-shrink-0">${fmtMs(node.avg_first_byte_latency_ms || 0)}</span>
+  </div>`;
+    }
+
+    function APICard({ gw }) {
+      const d = gw.data;
+      if (gw.error && !d) return html`<div class="bg-white/70 backdrop-blur-md rounded-xl p-5 border border-[#e8dec8]/70"><h3 class="font-bold text-stone-800 mb-2">${gw.name}</h3><p class="text-sm text-rose-500">${gw.error}</p></div>`;
+      if (!d) return null;
+      const nodes = d.nodes || [], available = nodes.filter(n => n.available).length, routes = d.routes || {};
+      const rate = d.requests?.success_rate ?? 0;
+      const topIps = d.top_ips || [];
+      const alerts = d.abuse_alerts || [];
+      const winMin = Math.round((d.window_seconds || 300) / 60);
+
+      return html`<div class="bg-white/70 backdrop-blur-md rounded-xl p-5 border border-[#e8dec8]/70 card-hover space-y-4">
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2 min-w-0"><h3 class="font-bold text-stone-800 truncate">${gw.name}</h3><${Badge} ok=${rate >= 90} text=${rate.toFixed(1) + '%'} /></div>
+      <span class="text-xs text-stone-400 flex-shrink-0">运行 ${fmtUptime(d.uptime_seconds || 0)}</span>
+    </div>
+    <div class="grid grid-cols-4 gap-2">
+      <${MiniStat} label="节点" value=${available + '/' + nodes.length} />
+      <${MiniStat} label=${`请求/${winMin}min`} value=${fmtTokens(d.requests?.total || 0)} />
+      <${MiniStat} label="延迟" value=${fmtMs(d.latency?.avg_ms)} />
+      <${MiniStat} label=${`Token/${winMin}min`} value=${fmtTokens(d.tokens?.total_tokens || 0)} />
+    </div>
+    <div class="bg-[#fbf8f1] rounded-lg p-3">
+      <div class="text-xs font-bold text-stone-600 mb-2">📡 路由</div>
+      <div class="space-y-1.5">
+        ${Object.entries(routes).map(([path, rd]) => {
+        const rr = rd.requests?.success_rate ?? 0;
+        const reqs = rd.requests?.total || 0;
+        const tokens = rd.tokens?.total_tokens || 0;
+        const stream = rd.streaming_requests || 0;
+        const nonStream = rd.non_streaming_requests || 0;
+
+        return html`<div class="border-b border-[#e8dec8]/60 last:border-0 pb-1.5 last:pb-0">
+            <div class="flex justify-between items-center text-xs mb-0.5">
+              <span class="font-mono text-stone-700 font-semibold truncate mr-2 min-w-0">${path}</span>
+              <div class="flex items-center gap-2 flex-shrink-0">
+                <span class="text-stone-500">${fmtMs(rd.avg_latency_ms || 0)}</span>
+                <span class="font-mono text-${statusColor(rr)}-600">${rr.toFixed(1)}%</span>
+              </div>
+            </div>
+            <div class="flex justify-between text-[10px] text-stone-500">
+              <div>请求: ${fmtTokens(reqs)} <span class="text-stone-400 ml-1">(流:${fmtTokens(stream)} 非流:${fmtTokens(nonStream)})</span></div>
+              <div class="text-amber-600 font-mono">Tokens: ${fmtTokens(tokens)}</div>
+            </div>
+          </div>`;
+      })}
+      </div>
+    </div>
+    <div class="bg-[#fbf8f1] rounded-lg p-3">
+      <div class="text-xs font-bold text-stone-600 mb-2">📈 延迟</div>
+      <${Bar} percent=${(d.latency?.p50_ms || 0) / 200} label="P50" value=${fmtMs(d.latency?.p50_ms)} />
+      <${Bar} percent=${(d.latency?.p95_ms || 0) / 200} label="P95" value=${fmtMs(d.latency?.p95_ms)} color="amber" />
+      <${Bar} percent=${Math.min(100, (d.latency?.p99_ms || 0) / 200)} label="P99" value=${fmtMs(d.latency?.p99_ms)} color="rose" />
+      <div class="flex flex-wrap gap-x-3 gap-y-1 mt-2 pt-2 border-t border-[#e8dec8]/60">
+        ${Object.entries(d.status_codes || {}).map(([code, cnt]) => html`
+          <span class="text-xs font-mono ${code === '200' ? 'text-emerald-600' : 'text-rose-600'}">${code}: ${cnt}</span>
+        `)}
+      </div>
+    </div>
+    ${alerts.length > 0 ? html`<div class="bg-rose-50 border border-rose-200 rounded-lg p-3">
+      <div class="text-xs font-bold text-rose-700 mb-2 flex items-center gap-1">⚠️ 异常告警 <span class="text-rose-500 font-normal">(${alerts.length} 个 token 异常)</span></div>
+      <div class="space-y-1.5">
+        ${alerts.slice(0, 8).map(a => html`<div class="text-xs border-b border-rose-200/60 last:border-0 pb-1.5 last:pb-0">
+          <div class="flex justify-between items-center">
+            <span class="font-mono text-rose-800 font-semibold truncate mr-2" title=${a.token_name}>${a.token_name}</span>
+            <span class="text-rose-600 font-mono flex-shrink-0">${a.ip_count} IP · ${a.request_count} 次</span>
+          </div>
+          <div class="text-[10px] text-rose-500 mt-0.5">${a.reason}</div>
+          <div class="text-[10px] text-stone-500 font-mono mt-0.5 truncate" title=${a.ips.map(x => x.ip + ':' + x.req).join(' / ')}>IP: ${a.ips.slice(0, 3).map(x => x.ip + '(' + x.req + ')').join(' · ')}${a.ips.length > 3 ? ' ...' : ''}</div>
+        </div>`)}
+      </div>
+    </div>` : null}
+    ${topIps.length > 0 ? html`<details>
+      <summary class="text-xs font-bold text-stone-500 flex items-center gap-1 hover:text-stone-700 select-none">
+        <span class="chevron inline-block relative top-[1px] text-[10px] w-3 text-center">▶</span> 活跃 IP / ${winMin}min (${topIps.length})
+      </summary>
+      <div class="mt-2 bg-[#fbf8f1] rounded-lg p-2 overflow-x-auto">
+        <div class="min-w-[320px]">
+          <div class="flex items-center gap-2 py-1 px-2 text-xs text-stone-400 font-medium">
+            <span class="flex-1">IP</span><span class="text-right w-12">请求</span><span class="text-right w-14">Token</span><span class="text-right w-10">卡数</span>
+          </div>
+          ${topIps.map((ip, i) => html`<div class="flex items-center gap-2 py-1 px-2 text-xs border-t border-[#e8dec8]/40 ${ip.suspicious ? 'bg-rose-50' : ''}">
+            <span class="flex-1 font-mono ${ip.suspicious ? 'text-rose-700 font-semibold' : 'text-stone-700'} truncate" title=${ip.top_token ? 'top token: ' + ip.top_token : ''}>${ip.suspicious ? '⚠️ ' : ''}${ip.ip}</span>
+            <span class="text-right w-12 font-mono ${ip.suspicious ? 'text-rose-600' : 'text-stone-600'}">${ip.requests}</span>
+            <span class="text-right w-14 font-mono text-amber-600">${fmtTokens(ip.tokens)}</span>
+            <span class="text-right w-10 font-mono text-stone-500">${ip.distinct_tokens}</span>
+          </div>`)}
+        </div>
+      </div>
+    </details>` : null}
+    <details>
+      <summary class="text-xs font-bold text-stone-500 flex items-center gap-1 hover:text-stone-700 select-none">
+        <span class="chevron inline-block relative top-[1px] text-[10px] w-3 text-center">▶</span> 节点详情 (${nodes.length})
+      </summary>
+      <div class="mt-2 bg-[#fbf8f1] rounded-lg p-2 overflow-x-auto">
+        <div class="min-w-[280px]">
+          <div class="flex items-center gap-2 py-1 px-2 text-xs text-stone-400 font-medium">
+            <span class="w-1.5"></span><span class="flex-1">节点</span><span class="text-right w-10">请求</span><span class="text-right w-12">成功率</span><span class="text-right w-14">延迟</span>
+          </div>
+          ${nodes.map((n, i) => html`<${NodeRow} key=${n.client_id || i} node=${n} />`)}
+        </div>
+      </div>
+    </details>
+  </div>`;
+    }
+
+    function ThrottleToggle() {
+      const [status, setStatus] = useState(null);
+      const [busy, setBusy] = useState(false);
+
+      const refresh = async () => {
+        try {
+          const r = await fetch('/api/admin/throttle');
+          if (r.ok) setStatus(await r.json());
+        } catch (e) { /* ignore */ }
+      };
+
+      useEffect(() => {
+        refresh();
+        const t = setInterval(refresh, 15000);
+        return () => clearInterval(t);
+      }, []);
+
+      const toggle = async () => {
+        if (!status) return;
+        const target = !status.enabled;
+        const verb = target ? '开启' : '关闭';
+        const secret = window.prompt(`${verb} DeepSeek 防并发限流?\n\n请输入管理员密码:`);
+        if (!secret) return;
+        setBusy(true);
+        try {
+          const r = await fetch('/api/admin/throttle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: target, secret })
+          });
+          const j = await r.json();
+          if (r.ok && j.ok) {
+            setStatus(j.status || { enabled: target });
+            window.alert(`已${verb}成功 ✅`);
+          } else {
+            window.alert('失败: ' + (j.error || r.statusText));
+          }
+        } catch (e) {
+          window.alert('请求失败: ' + e.message);
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      if (!status) return null;
+      const on = !!status.enabled;
+      const dur = status.duration_minutes || 10;
+      const cap = status.de_throttled_success || 0;
+      const tokens = status.capped_token_count || 0;
+
+      return html`<div class="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border ${on ? 'bg-emerald-50 border-emerald-200' : 'bg-stone-50 border-stone-200'}">
+        <span class="${on ? 'text-emerald-700' : 'text-stone-500'} font-semibold">
+          ${on ? '🛡️' : '⚪'} DeepSeek 限流: ${on ? '开启' : '关闭'}
+        </span>
+        ${on ? html`<span class="text-stone-500 font-mono">${cap}/${dur}min · ${tokens} 卡</span>` : null}
+        <button onClick=${toggle} disabled=${busy} 
+                class="ml-1 px-2 py-0.5 rounded ${on ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-500 hover:bg-emerald-600'} text-white text-xs disabled:opacity-50">
+          ${busy ? '...' : (on ? '关闭' : '开启')}
+        </button>
+      </div>`;
+    }
+
+    function App() {
+      const [gateways, setGateways] = useState([]);
+      const [minimax, setMinimax] = useState(null);
+      const [lastUpdate, setLastUpdate] = useState(null);
+      const [error, setError] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        let alive = true;
+        async function load() {
+          try {
+            const [r, mm] = await Promise.all([
+              fetch('/api/stats'),
+              fetch('/api/minimax').catch(() => null)
+            ]);
+            if (!r.ok) throw new Error('网络异常');
+            const j = await r.json();
+            const mmj = mm && mm.ok ? await mm.json() : null;
+            if (alive) {
+              setGateways(j);
+              setMinimax(mmj);
+              setLastUpdate(new Date());
+              setError(null);
+              setLoading(false);
+            }
+          } catch (e) {
+            if (alive) {
+              setError("更新失败");
+              setLoading(false);
+            }
+          }
+        }
+        load(); const t = setInterval(load, 5000); return () => { alive = false; clearInterval(t); };
+      }, []);
+
+      // 优雅的 Loading 状态：消除请求数据时的空壳白屏
+      if (loading) {
+        return html`<div class="min-h-screen flex flex-col items-center justify-center gap-4 text-stone-500">
+      <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-stone-800"></div>
+      <p class="animate-pulse text-sm font-medium">连接节点，获取最新状态...</p>
+    </div>`;
+      }
+
+      const allOk = useMemo(() => gateways.filter(g => g.data), [gateways]);
+      const stats = useMemo(() => ({
+        totalNodes: allOk.reduce((s, g) => s + (g.data?.nodes?.length ?? 0), 0),
+        totalAvail: allOk.reduce((s, g) => s + (g.data?.nodes?.filter(n => n.available).length ?? 0), 0),
+        totalReqs: allOk.reduce((s, g) => s + (g.data?.requests?.total ?? 0), 0),
+        totalTokens: allOk.reduce((s, g) => s + (g.data?.tokens?.total_tokens ?? 0), 0),
+        winMin: Math.round((allOk[0]?.data?.window_seconds || 300) / 60),
+        totalAlerts: allOk.reduce((s, g) => s + (g.data?.abuse_alerts?.length ?? 0), 0),
+      }), [allOk]);
+
+      return html`<div class="max-w-7xl mx-auto px-4 py-8">
+    <header class="mb-8">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-stone-800 flex items-center gap-2">⚡ NassaAPI</h1>
+          <p class="text-sm text-stone-500 mt-1 flex items-center gap-2">
+            <span class="relative flex h-2 w-2">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full ${error ? 'bg-rose-400' : 'bg-emerald-400'} opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2 ${error ? 'bg-rose-500' : 'bg-emerald-500'}"></span>
+            </span>
+            ${allOk.length} 网关 · ${stats.totalAvail}/${stats.totalNodes} 节点 · 更新 ${lastUpdate?.toLocaleTimeString() || '-'}
+            ${error ? html`<span class="text-rose-500 ml-1">(${error})</span>` : null}
+          </p>
+        </div>
+        <div class="flex items-center gap-4 text-sm flex-wrap">
+          <${ThrottleToggle} />
+          ${stats.totalAlerts > 0 ? html`<div class="text-center border-r border-[#e8dec8]/60 pr-4"><div class="text-rose-500">⚠️ 异常告警</div><div class="text-xl font-bold text-rose-600">${stats.totalAlerts}</div></div>` : null}
+          <div class="text-center"><div class="text-stone-500">总请求 <span class="text-stone-400">/${stats.winMin}min</span></div><div class="text-xl font-bold text-stone-800">${stats.totalReqs}</div></div>
+          <div class="text-center border-l border-[#e8dec8]/60 pl-4"><div class="text-stone-500">Token <span class="text-stone-400">/${stats.winMin}min</span></div><div class="text-xl font-bold text-amber-600">${fmtTokens(stats.totalTokens)}</div></div>
+        </div>
+      </div>
+    </header>
+
+    <section class="mb-8">
+      <h2 class="text-base font-bold text-stone-700 mb-4 flex items-center gap-2">🖥️ VPS 监控</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        ${gateways.map(gw => html`<${SystemCard} key=${'sys-' + gw.tag} name=${gw.name} sys=${gw.system} />`)}
+      </div>
+    </section>
+
+    <${MiniMaxSection} data=${minimax} />
+
+    <section class="mb-8">
+      <h2 class="text-base font-bold text-stone-700 mb-4 flex items-center gap-2">📊 API 状态历史</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        ${gateways.map(gw => html`<${UptimeSection} key=${'uptime-' + gw.tag} gwName=${gw.name} historyData=${gw.history} />`)}
+      </div>
+    </section>
+
+    <section>
+      <h2 class="text-base font-bold text-stone-700 mb-4 flex items-center gap-2">📡 API 网关监控</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        ${gateways.map(gw => html`<${APICard} key=${'api-' + gw.tag} gw=${gw} />`)}
+      </div>
+    </section>
+
+    <footer class="mt-12 text-center text-xs text-stone-400">NassaAPI · Auto-refresh 5s</footer>
+  </div>`;
+    }
+
+    render(html`<${App} />`, document.getElementById('root'));
+  </script>
+</body>
+
+</html>

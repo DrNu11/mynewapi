@@ -63,6 +63,9 @@ async function call<T = any>(path: string, init: RequestInit = {}): Promise<NewA
   return body;
 }
 
+/** NewAPI 内部 quota 倍率:1 USD = 500000 quota */
+const QUOTA_PER_USD = 500000;
+
 export interface CreateTokenInput {
   /** 令牌名(用于后续按 name 搜索定位) */
   name: string;
@@ -72,17 +75,20 @@ export interface CreateTokenInput {
   model_limits: string;
   /** 渠道分组,默认 default */
   group?: string;
+  /** USD 额度;不传/<=0 则 unlimited_quota=true(吃 root 池) */
+  quotaUSD?: number;
 }
 
 /** 创建 token (NewAPI 不返回 id/key,需要后续 search 找到) */
 export async function createToken(input: CreateTokenInput): Promise<void> {
+  const hasQuota = typeof input.quotaUSD === 'number' && input.quotaUSD > 0;
   await call('/api/token/', {
     method: 'POST',
     body: JSON.stringify({
       name: input.name,
       expired_time: input.expired_time,
-      remain_quota: 0,
-      unlimited_quota: true,
+      remain_quota: hasQuota ? Math.round(input.quotaUSD! * QUOTA_PER_USD) : 0,
+      unlimited_quota: !hasQuota,
       model_limits_enabled: true,
       model_limits: input.model_limits,
       group: input.group ?? 'default',
@@ -150,17 +156,88 @@ export async function updateTokenStatus(tokenId: number, status: 1 | 2): Promise
   });
 }
 
+/** NewAPI 完整 token 对象 (PUT 时需要回传) */
+interface NewApiToken {
+  id: number;
+  name: string;
+  status: number;
+  created_time: number;
+  accessed_time?: number;
+  expired_time: number;
+  remain_quota?: number;
+  unlimited_quota?: boolean;
+  model_limits_enabled?: boolean;
+  model_limits?: string;
+  group?: string;
+  cross_group_retry?: boolean;
+  allow_ips?: string;
+  user_id?: number;
+  // 其他字段保留 raw 透传
+  [k: string]: unknown;
+}
+
+/** GET /api/token/:id — 返回完整 token 对象 (NewAPI 真实 schema) */
+export async function getTokenById(tokenId: number): Promise<NewApiToken> {
+  const body = await call<NewApiToken>(`/api/token/${tokenId}`);
+  if (!body.data) throw new Error(`NewAPI token ${tokenId} 不存在或返回空`);
+  return body.data;
+}
+
+/**
+ * 修改 token 的 expired_time (用于续费).
+ *
+ * 流程:
+ *   1) GET 完整 token,以 server 端真实 expired_time 为准
+ *   2) PUT 完整对象,只改 expired_time 字段
+ *   3) GET 校验 server 端 expired_time === newExpiredTime (防止 PUT 没生效)
+ *
+ * @returns { before, after } 续费前/后 unix 秒
+ * @throws  PUT 后 server 端不一致 → 抛错(由调用方决定回滚)
+ */
+export async function updateTokenExpiredTime(
+  tokenId: number,
+  newExpiredTime: number,
+): Promise<{ before: number; after: number }> {
+  if (!Number.isFinite(newExpiredTime) || newExpiredTime <= 0) {
+    throw new Error(`非法 newExpiredTime=${newExpiredTime}`);
+  }
+  const before = await getTokenById(tokenId);
+  const beforeExp = Number(before.expired_time);
+
+  // PUT 完整对象,只覆盖 expired_time
+  await call(`/api/token/`, {
+    method: 'PUT',
+    body: JSON.stringify({ ...before, expired_time: newExpiredTime }),
+  });
+
+  // 验证落地
+  const after = await getTokenById(tokenId);
+  const afterExp = Number(after.expired_time);
+  if (afterExp !== newExpiredTime) {
+    throw new Error(
+      `NewAPI 端 expired_time 未生效 (期望 ${newExpiredTime},实际 ${afterExp})`,
+    );
+  }
+  return { before: beforeExp, after: afterExp };
+}
+
 /**
  * 端到端创建 token 并返回完整 sk-xxx key
  * 失败时尝试清理已创建的孤儿 token
+ *
+ * @param noExpire 若 true 则 NewAPI expired_time=-1 (永不过期),返回的 expiredAt 也为 -1。
+ *                 daysValid 在 noExpire=true 时不影响 token 过期,但仍记录在 cards.plan_days 用于展示。
  */
 export async function createTokenAndGetKey(
   name: string,
   daysValid: number,
-  modelLimits: string
+  modelLimits: string,
+  quotaUSD?: number,
+  noExpire?: boolean,
+  group?: string
 ): Promise<{ id: number; key: string; expiredAt: number }> {
-  const expiredAt = Math.floor(Date.now() / 1000) + daysValid * 86400;
-  await createToken({ name, expired_time: expiredAt, model_limits: modelLimits });
+  const expiredAt = noExpire ? -1 : Math.floor(Date.now() / 1000) + daysValid * 86400;
+  await createToken({ name, expired_time: expiredAt, model_limits: modelLimits, quotaUSD, group });
 
   // 重试找 id (默认 5 次 × 250ms = 最多等 1s)
   const id = await findTokenIdWithRetry(name);

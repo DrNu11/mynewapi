@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { useEffect, useMemo, useState } from 'react'
 import type { z } from 'zod'
 import { useForm } from 'react-hook-form'
@@ -261,7 +279,7 @@ export function UserAuthForm({
     <Form {...form}>
       <form
         onSubmit={form.handleSubmit(onSubmit)}
-        className={cn('grid gap-5', className)}
+        className={cn('grid gap-4', className)}
         {...props}
       >
         {/* Username Field */}
@@ -270,14 +288,10 @@ export function UserAuthForm({
           name='username'
           render={({ field }) => (
             <FormItem>
-              <FormLabel className='text-sm font-medium text-white/72'>
-                {t('Username or Email')}
-              </FormLabel>
+              <FormLabel>{t('Username or Email')}</FormLabel>
               <FormControl>
                 <Input
                   placeholder={t('Enter your username or email')}
-                  autoComplete='username'
-                  className='h-12 rounded-2xl border-white/10 bg-white/[0.065] px-4 text-base text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition-all duration-300 placeholder:text-white/28 focus-visible:border-white/28 focus-visible:ring-2 focus-visible:ring-white/18'
                   {...field}
                 />
               </FormControl>
@@ -292,21 +306,14 @@ export function UserAuthForm({
           name='password'
           render={({ field }) => (
             <FormItem className='relative'>
-              <FormLabel className='text-sm font-medium text-white/72'>
-                {t('Password')}
-              </FormLabel>
+              <FormLabel>{t('Password')}</FormLabel>
               <FormControl>
-                <PasswordInput
-                  placeholder={t('Enter password')}
-                  autoComplete='current-password'
-                  className='h-12 rounded-2xl border-white/10 bg-white/[0.065] px-4 text-base text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition-all duration-300 placeholder:text-white/28 focus-visible:border-white/28 focus-visible:ring-2 focus-visible:ring-white/18'
-                  {...field}
-                />
+                <PasswordInput placeholder={t('Enter password')} {...field} />
               </FormControl>
               <FormMessage />
               <Link
                 to='/forgot-password'
-                className='absolute end-0 -top-0.5 text-sm font-semibold text-white/42 transition-colors hover:text-white/78'
+                className='text-muted-foreground absolute end-0 -top-0.5 z-10 text-sm font-medium hover:opacity-75'
               >
                 {t('Forgot password?')}
               </Link>
@@ -316,14 +323,11 @@ export function UserAuthForm({
 
         {/* Submit Button */}
         <Button
-          className='mt-1 h-12 w-full justify-center gap-2 rounded-2xl bg-white text-base font-semibold text-black shadow-[0_16px_48px_rgba(255,255,255,0.14)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-white/[0.88] hover:shadow-[0_20px_60px_rgba(255,255,255,0.18)]'
+          type='submit'
+          className='mt-2 w-full justify-center gap-2'
           disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
         >
-          {isLoading ? (
-            <Loader2 className='h-4 w-4 animate-spin' />
-          ) : (
-            <LogIn className='h-4 w-4' />
-          )}
+          {isLoading ? <Loader2 className='animate-spin' /> : <LogIn />}
           {t('Sign in')}
         </Button>
 
@@ -345,13 +349,13 @@ export function UserAuthForm({
         />
 
         {passkeyLoginEnabled && (
-          <div className='mt-1 space-y-2'>
+          <div className='mt-2 space-y-1'>
             <Button
               type='button'
               variant='outline'
               disabled={passkeyButtonDisabled}
               onClick={handlePasskeyLogin}
-              className='h-12 w-full justify-center gap-2 rounded-2xl border-white/10 bg-white/[0.065] font-medium text-white/82 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition-all duration-300 hover:-translate-y-0.5 hover:border-white/18 hover:bg-white/[0.11]'
+              className='h-11 w-full justify-center gap-2 rounded-lg'
             >
               {isPasskeyLoading ? (
                 <Loader2 className='h-4 w-4 animate-spin' />

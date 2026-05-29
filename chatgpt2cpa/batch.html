@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CPA 批量转换</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      background: #0a0a0a;
+      color: #e5e5e5;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      color: #888;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+
+    .subtitle code {
+      background: #1f1f1f;
+      padding: 1px 6px;
+      border-radius: 3px;
+      color: #b5e853;
+      font-size: 12px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 220px;
+      background: #131313;
+      color: #d4d4d4;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px;
+      resize: vertical;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: #4a9eff;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin: 16px 0;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    button {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+
+    button:hover:not(:disabled) {
+      background: #1d4ed8;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    button.secondary {
+      background: #404040;
+    }
+
+    button.secondary:hover:not(:disabled) {
+      background: #525252;
+    }
+
+    .stat {
+      color: #888;
+      font-size: 13px;
+      margin-left: auto;
+    }
+
+    .stat .ok {
+      color: #4ade80;
+    }
+
+    .stat .err {
+      color: #f87171;
+    }
+
+    .results {
+      margin-top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card {
+      background: #131313;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .card.error {
+      border-color: #7f1d1d;
+    }
+
+    .card-head {
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #1a1a1a;
+    }
+
+    .card-head .email {
+      font-weight: 600;
+      font-size: 13px;
+      flex: 1;
+    }
+
+    .card-head .plan {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #1e3a8a;
+      color: #93c5fd;
+    }
+
+    .card-head .syn {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #422006;
+      color: #fb923c;
+    }
+
+    .card-head .err-badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #7f1d1d;
+      color: #fca5a5;
+    }
+
+    .card-head button {
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+
+    .card-body {
+      padding: 12px 14px;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      color: #a3a3a3;
+      max-height: 240px;
+      overflow: auto;
+      white-space: pre;
+    }
+
+    .warn {
+      background: #422006;
+      color: #fbbf24;
+      padding: 6px 14px;
+      font-size: 12px;
+    }
+
+    .empty {
+      text-align: center;
+      color: #525252;
+      padding: 60px 0;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>CPA 批量转换</h1>
+    <div class="subtitle">粘贴 ChatGPT/Codex 旧格式 JSONL（一行一个 JSON），自动转 CPA <code>auth.json</code> schema。数据不离开浏览器。</div>
+
+    <textarea id="input" placeholder='每行一个 JSON，例如：
+{"type":"codex","account_id":"...","email":"...","id_token":"...","access_token":"...",...}
+{"type":"codex","account_id":"...","email":"...","id_token":"...","access_token":"...",...}
+...'></textarea>
+
+    <div class="controls">
+      <button id="convert">转换</button>
+      <button id="download-all" class="secondary" disabled>下载全部 (zip)</button>
+      <button id="copy-jsonl" class="secondary" disabled>复制全部 (JSONL)</button>
+      <button id="clear" class="secondary">清空</button>
+      <div class="stat" id="stat"></div>
+    </div>
+
+    <div class="results" id="results">
+      <div class="empty">等待输入</div>
+    </div>
+  </div>
+
+  <script>
+    // 与 chatgpt2cpa/converter.py:build_auth_data_from_fields 的字段顺序一致
+    function convertOne(src) {
+      if (!src || typeof src !== 'object') throw new Error('not an object');
+      const access_token = (src.access_token || src.accessToken || '').trim();
+      if (!access_token) throw new Error('missing access_token');
+
+      const out = {
+        type: 'codex',
+        email: (src.email || '').trim(),
+        account_id: (src.account_id || src.chatgpt_account_id || '').trim(),
+        chatgpt_account_id: (src.chatgpt_account_id || src.account_id || '').trim(),
+        plan_type: (src.plan_type || '').trim() || 'plus',
+        chatgpt_plan_type: (src.chatgpt_plan_type || src.plan_type || '').trim() || 'plus',
+        id_token: (src.id_token || '').trim(),
+        access_token: access_token,
+        refresh_token: (src.refresh_token || '').trim(),
+        session_token: (src.session_token || '').trim(),
+        last_refresh: (src.last_refresh || new Date().toISOString().replace(/\.\d+Z$/, 'Z')).trim(),
+        expired: (src.expired || '').trim(),
+        disabled: !!src.disabled,
+      };
+      if (src.id_token_synthetic) out.id_token_synthetic = true;
+      return out;
+    }
+
+    function safeFilenamePart(s, fallback) {
+      s = (s || fallback || 'unknown').toLowerCase().trim();
+      s = s.replace(/[^a-z0-9@._+-]+/g, '-');
+      s = s.replace(/^[._-]+|[._-]+$/g, '');
+      return (s || fallback || 'unknown').slice(0, 96);
+    }
+
+    function filenameOf(data) {
+      const email = safeFilenamePart(data.email, 'unknown');
+      const plan = safeFilenamePart(data.plan_type, 'unknown');
+      return `codex-${email}-${plan}-cpa.json`;
+    }
+
+    const $ = id => document.getElementById(id);
+    let results = [];
+
+    function render() {
+      const wrap = $('results');
+      if (!results.length) {
+        wrap.innerHTML = '<div class="empty">等待输入</div>';
+        return;
+      }
+      wrap.innerHTML = '';
+      results.forEach((r, i) => {
+        const card = document.createElement('div');
+        card.className = 'card' + (r.error ? ' error' : '');
+        const synBadge = r.data && r.data.id_token_synthetic ? '<span class="syn">synthetic</span>' : '';
+        const planBadge = r.data ? `<span class="plan">${r.data.plan_type}</span>` : '';
+        const errBadge = r.error ? '<span class="err-badge">错误</span>' : '';
+        card.innerHTML = `
+      <div class="card-head">
+        <span class="email">${i + 1}. ${r.email || '(无 email)'}</span>
+        ${planBadge}${synBadge}${errBadge}
+        ${r.error ? '' : `<button data-act="copy" data-i="${i}">复制</button><button data-act="download" data-i="${i}" class="secondary">下载</button>`}
+      </div>
+      ${r.error ? `<div class="warn">${r.error}</div>` : ''}
+      <div class="card-body">${r.error ? r.raw : JSON.stringify(r.data, null, 2)}</div>
+    `;
+        wrap.appendChild(card);
+      });
+    }
+
+    function doConvert() {
+      const text = $('input').value.trim();
+      results = [];
+      if (!text) { $('stat').innerHTML = ''; render(); return; }
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      let ok = 0, err = 0;
+      for (const line of lines) {
+        try {
+          const src = JSON.parse(line);
+          const data = convertOne(src);
+          results.push({ email: data.email, data, raw: line });
+          ok++;
+        } catch (e) {
+          results.push({ email: '', error: e.message, raw: line.slice(0, 200) });
+          err++;
+        }
+      }
+      $('stat').innerHTML = `共 ${lines.length} 条 · <span class="ok">成功 ${ok}</span>${err ? ` · <span class="err">失败 ${err}</span>` : ''}`;
+      $('download-all').disabled = ok === 0;
+      $('copy-jsonl').disabled = ok === 0;
+      render();
+    }
+
+    function downloadBlob(blob, name) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+
+    $('convert').onclick = doConvert;
+    $('clear').onclick = () => { $('input').value = ''; results = []; $('stat').innerHTML = ''; $('download-all').disabled = true; $('copy-jsonl').disabled = true; render(); };
+
+    $('copy-jsonl').onclick = async () => {
+      const jsonl = results.filter(r => !r.error).map(r => JSON.stringify(r.data)).join('\n');
+      await navigator.clipboard.writeText(jsonl);
+      const btn = $('copy-jsonl'); const t = btn.textContent;
+      btn.textContent = '已复制 ✓'; setTimeout(() => btn.textContent = t, 1200);
+    };
+
+    $('download-all').onclick = async () => {
+      const zip = new JSZip();
+      results.filter(r => !r.error).forEach(r => {
+        zip.file(filenameOf(r.data), JSON.stringify(r.data, null, 2));
+      });
+      const blob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(blob, `cpa-batch-${Date.now()}.zip`);
+    };
+
+    $('results').addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      const i = +btn.dataset.i;
+      const r = results[i];
+      if (!r || r.error) return;
+      if (btn.dataset.act === 'copy') {
+        await navigator.clipboard.writeText(JSON.stringify(r.data, null, 2));
+        const t = btn.textContent; btn.textContent = '已复制 ✓'; setTimeout(() => btn.textContent = t, 1000);
+      } else {
+        downloadBlob(new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' }), filenameOf(r.data));
+      }
+    });
+  </script>
+</body>
+
+</html>

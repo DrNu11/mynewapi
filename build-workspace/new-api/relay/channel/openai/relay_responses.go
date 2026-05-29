@@ -31,6 +31,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		SanitizeUpstreamError(oaiError, info)
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
@@ -39,11 +40,6 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		c.Set("image_generation_call_quality", responsesResponse.GetQuality())
 		c.Set("image_generation_call_size", responsesResponse.GetSize())
 	}
-
-	// Strip upstream-identifying fields (model name, system_fingerprint,
-	// reasoning_content, etc.) before writing the response back to the
-	// client. Same protection logic as the /v1/chat/completions path.
-	responseBody = HideUpstreamInJSON(c, responseBody, info)
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -93,7 +89,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		sendResponsesStreamData(c, info, streamResponse, data)
+		sendResponsesStreamData(c, streamResponse, data)
 		switch streamResponse.Type {
 		case "response.completed":
 			if streamResponse.Response != nil {

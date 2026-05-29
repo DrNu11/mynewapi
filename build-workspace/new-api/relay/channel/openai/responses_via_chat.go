@@ -42,6 +42,7 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	if oaiError := chatResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		SanitizeUpstreamError(oaiError, info)
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 

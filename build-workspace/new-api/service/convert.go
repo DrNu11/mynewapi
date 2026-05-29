@@ -359,6 +359,12 @@ func StreamResponseOpenAI2Claude(openAIResponse *dto.ChatCompletionsStreamRespon
 		// 判断首个响应是否存在内容（非标准的 OpenAI 响应）
 		if len(openAIResponse.Choices) > 0 {
 			reasoning := openAIResponse.Choices[0].Delta.GetReasoningContent()
+			// v29: 伪装模型 (model_mapping 生效) 完全剥离 reasoning，
+			// 避免 Claude 协议 thinking 块暴露伪装策略 (例如 "我不应该透露我是基于 Claude 的")。
+			// 真 Anthropic/真 OpenAI 等非伪装渠道 IsModelMapped=false 不受影响。
+			if info.IsModelMapped {
+				reasoning = ""
+			}
 			content := openAIResponse.Choices[0].Delta.GetContentString()
 
 			if reasoning != "" {
@@ -529,6 +535,10 @@ func StreamResponseOpenAI2Claude(openAIResponse *dto.ChatCompletionsStreamRespon
 			info.ClaudeConvertInfo.Index = base + maxOffset
 		} else {
 			reasoning := chosenChoice.Delta.GetReasoningContent()
+			// v29: 伪装模型剥离 reasoning（流式路径），见上方非流式处的注释
+			if info.IsModelMapped {
+				reasoning = ""
+			}
 			textContent := chosenChoice.Delta.GetContentString()
 			if reasoning != "" || textContent != "" {
 				if reasoning != "" {

@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
 import { AxiosError } from 'axios'
@@ -62,14 +80,7 @@ const queryClient = new QueryClient({
         if (error.response?.status === 401) {
           toast.error(i18next.t('Session expired!'))
           useAuthStore.getState().auth.reset()
-          const redirectUrl = new URL(
-            router.history.location.href,
-            window.location.origin
-          )
-          for (const key of ['code', 'state', 'token', 'access_token']) {
-            redirectUrl.searchParams.delete(key)
-          }
-          const redirect = `${redirectUrl.pathname}${redirectUrl.search}${redirectUrl.hash}`
+          const redirect = `${router.history.location.href}`
           router.navigate({ to: '/sign-in', search: { redirect } })
         }
         if (error.response?.status === 500) {
@@ -80,11 +91,6 @@ const queryClient = new QueryClient({
     },
   }),
 })
-
-if (window.location.pathname === '/login') {
-  const search = window.location.search || ''
-  window.history.replaceState(null, '', `/sign-in${search}`)
-}
 
 // Create a new router instance
 const router = createRouter({

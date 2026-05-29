@@ -21,15 +21,71 @@ func GetAllLogs(c *gin.Context) {
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
 	requestId := c.Query("request_id")
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId)
+	upstreamRequestId := c.Query("upstream_request_id")
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	// v23: 演示账号脱敏 — 隐藏 channel 真实名 + 删 other JSON 里暴露伪装的子字段
+	if c.GetBool("is_demo") {
+		sanitizeLogsForDemo(logs)
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
 	return
+}
+
+// demoSensitiveOtherKeys v23: log.other JSON 里会暴露上游伪装机制的 key 黑名单。
+// 演示账号读 logs 时会把这些 key 从 other JSON 里删掉，保留业务统计字段（cache_ratio/frt/quota 等）。
+var demoSensitiveOtherKeys = []string{
+	"upstream_model_name",
+	"admin_info",
+	"is_model_mapped",
+	"is_system_prompt_overwritten",
+	"request_conversion",
+	"channel_affinity",
+}
+
+// sanitizeLogsForDemo 对演示账号脱敏 logs：
+//  1. Username 改成 "客户-XXXX"（取 token_name 后 4 位）— 让每个 token 看起来是独立客户，
+//     而不是都挂在 admin 账号下；同一 token 始终同名，一致性好
+//  2. ChannelName 改成 "渠道-{id}" 隐藏真实渠道名（如 "minimax测试伪装deepseek3"）
+//  3. Other JSON 删除 demoSensitiveOtherKeys 列表里的 key（upstream_model_name 等）
+//  4. 删除 UpstreamRequestId（可能含上游服务商前缀）
+func sanitizeLogsForDemo(logs []*model.Log) {
+	for _, log := range logs {
+		if log == nil {
+			continue
+		}
+		// Username 列脱敏：每个 token 看起来是独立客户。
+		// 用 rune 切片避免中文 token_name（如 "金元宝"）按字节切坏 UTF-8。
+		runes := []rune(log.TokenName)
+		if n := len(runes); n >= 4 {
+			log.Username = "客户-" + string(runes[n-4:])
+		} else if n > 0 {
+			log.Username = "客户-" + log.TokenName
+		} else {
+			log.Username = "客户"
+		}
+		// v24: 同时清掉 ChannelId 和 ChannelName，让前端「渠道」列不显示任何标识，
+		// 避免合伙人通过对比 channel_id 数字推测我们的渠道分布/数量。
+		log.ChannelId = 0
+		log.ChannelName = ""
+		log.UpstreamRequestId = ""
+		if log.Other != "" {
+			var otherMap map[string]interface{}
+			if err := common.UnmarshalJsonStr(log.Other, &otherMap); err == nil && otherMap != nil {
+				for _, k := range demoSensitiveOtherKeys {
+					delete(otherMap, k)
+				}
+				if cleaned, err := common.Marshal(otherMap); err == nil {
+					log.Other = string(cleaned)
+				}
+			}
+		}
+	}
 }
 
 func GetUserLogs(c *gin.Context) {
@@ -42,7 +98,8 @@ func GetUserLogs(c *gin.Context) {
 	modelName := c.Query("model_name")
 	group := c.Query("group")
 	requestId := c.Query("request_id")
-	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, requestId)
+	upstreamRequestId := c.Query("upstream_request_id")
+	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, requestId, upstreamRequestId)
 	if err != nil {
 		common.ApiError(c, err)
 		return

@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/relay/channel/openai"
 	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -779,10 +778,6 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	if oaiResponse != nil {
 		oaiResponse.Id = claudeInfo.ResponseId
 		oaiResponse.Created = claudeInfo.Created
-		// NOTE: oaiResponse.Model is set to upstream's real model name here,
-		// but the downstream openai.HideUpstreamInJSON pass (in
-		// HandleStreamResponseData) will rewrite it to the client-facing
-		// (origin) model name before any chunk is flushed to the client.
 		oaiResponse.Model = claudeInfo.Model
 	}
 	return true
@@ -804,7 +799,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
 		maybeMarkClaudeRefusal(c, *claudeResponse.Delta.StopReason)
 	}
-		if info.RelayFormat == types.RelayFormatClaude {
+	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)
 
 		if claudeResponse.Type == "message_start" {
@@ -819,9 +814,6 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
 			}
 		}
-		// Strip upstream model name and other identifying fields from the
-		// raw SSE payload before flushing to the client.
-		data = openai.HideUpstreamInString(c, data, info)
 		helper.ClaudeChunkData(c, claudeResponse, data)
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		response := StreamResponseClaude2OpenAI(&claudeResponse)
@@ -830,18 +822,9 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			return nil
 		}
 
-		// Marshal manually so we can run the upstream-hide pass before the
-		// chunk is written. Using StringData skips ObjectData's own marshal.
-		if respBytes, mErr := common.Marshal(response); mErr == nil {
-			respBytes = openai.HideUpstreamInJSON(c, respBytes, info)
-			if sendErr := helper.StringData(c, string(respBytes)); sendErr != nil {
-				logger.LogError(c, "send_stream_response_failed: "+sendErr.Error())
-			}
-		} else {
-			// Fail-open: fall back to the original path if marshal fails.
-			if sendErr := helper.ObjectData(c, response); sendErr != nil {
-				logger.LogError(c, "send_stream_response_failed: "+sendErr.Error())
-			}
+		err = helper.ObjectData(c, response)
+		if err != nil {
+			logger.LogError(c, "send_stream_response_failed: "+err.Error())
 		}
 	}
 	return nil
@@ -875,13 +858,7 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		if info.ShouldIncludeUsage {
 			openAIUsage := buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
-			// Use the client-facing (origin) model name here; falling back to
-			// upstream only if origin is unavailable for some reason.
-			displayModel := info.OriginModelName
-			if displayModel == "" {
-				displayModel = info.UpstreamModelName
-			}
-			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, displayModel, openAIUsage)
+			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
 			err := helper.ObjectData(c, response)
 			if err != nil {
 				common.SysLog("send final response failed: " + err.Error())
@@ -953,10 +930,6 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	if claudeResponse.Usage != nil && claudeResponse.Usage.ServerToolUse != nil && claudeResponse.Usage.ServerToolUse.WebSearchRequests > 0 {
 		c.Set("claude_web_search_requests", claudeResponse.Usage.ServerToolUse.WebSearchRequests)
 	}
-
-	// Strip upstream-identifying fields (model name / system_fingerprint /
-	// reasoning_content / etc.) from the response body before forwarding.
-	responseData = openai.HideUpstreamInJSON(c, responseData, info)
 
 	service.IOCopyBytesGracefully(c, httpResp, responseData)
 	return nil

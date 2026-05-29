@@ -278,7 +278,7 @@ function renderModelName(record, copyText, t) {
   if (!modelMapped) {
     return renderModelTag(record.model_name, {
       onClick: (event) => {
-        copyText(event, record.model_name).then((r) => {});
+        copyText(event, record.model_name).then((r) => { });
       },
     });
   } else {
@@ -295,7 +295,7 @@ function renderModelName(record, copyText, t) {
                     </Typography.Text>
                     {renderModelTag(record.model_name, {
                       onClick: (event) => {
-                        copyText(event, record.model_name).then((r) => {});
+                        copyText(event, record.model_name).then((r) => { });
                       },
                     })}
                   </div>
@@ -306,7 +306,7 @@ function renderModelName(record, copyText, t) {
                     {renderModelTag(other.upstream_model_name, {
                       onClick: (event) => {
                         copyText(event, other.upstream_model_name).then(
-                          (r) => {},
+                          (r) => { },
                         );
                       },
                     })}
@@ -317,7 +317,7 @@ function renderModelName(record, copyText, t) {
           >
             {renderModelTag(record.model_name, {
               onClick: (event) => {
-                copyText(event, record.model_name).then((r) => {});
+                copyText(event, record.model_name).then((r) => { });
               },
               suffixIcon: (
                 <Route
@@ -518,7 +518,9 @@ export const getLogsColumns = ({
           }
         }
 
+        // v25: channel_id 为 0（演示账号脱敏）时不渲染任何内容，避免显示「未知渠道」fallback
         return isAdminUser &&
+          Number(text) > 0 &&
           (record.type === 0 ||
             record.type === 2 ||
             record.type === 5 ||

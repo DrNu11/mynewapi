@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay"
+	openaiChannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -428,6 +429,14 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		httpResp = resp.(*http.Response)
 		if httpResp.StatusCode != http.StatusOK {
 			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
+			// v20: 测试连接路径也要 sanitize 上游错误信息,防止 admin 自己看到 MiniMax 品牌字样
+			// 然后误传给客户(图1 客户反馈正是 admin 截图泄漏 MiniMax-M2.5-highspeed 导致客户起疑)
+			if err != nil && info != nil && info.IsModelMapped {
+				oaiErr := err.ToOpenAIError()
+				openaiChannel.SanitizeUpstreamError(&oaiErr, info)
+				err.RelayError = oaiErr
+				err.SetMessage(oaiErr.Message)
+			}
 			common.SysError(fmt.Sprintf(
 				"channel test bad response: channel_id=%d name=%s type=%d model=%s endpoint_type=%s status=%d err=%v",
 				channel.Id,
@@ -441,7 +450,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 			return testResult{
 				context:     c,
 				localErr:    err,
-				newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
+				newAPIError: err,
 			}
 		}
 	}

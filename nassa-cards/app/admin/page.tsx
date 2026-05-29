@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { PLANS } from '@/lib/plans';
+import { PLANS, formatDaysCN } from '@/lib/plans';
 import { CATEGORIES, CATEGORY_LIST, type Category } from '@/lib/categories';
 import {
   Plus,
@@ -13,8 +13,11 @@ import {
   Loader2,
   KeyRound,
   Filter,
+  Search,
+  X,
   Ban,
   Power,
+  FolderTree,
 } from 'lucide-react';
 
 interface CardRow {
@@ -31,6 +34,7 @@ interface CardRow {
   expires_at: number | null;
   newapi_token_key: string | null;
   notes: string | null;
+  pool: string | null;
 }
 
 interface Stats {
@@ -45,15 +49,26 @@ export default function AdminDashboard() {
   const router = useRouter();
   const [cards, setCards] = useState<CardRow[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [pools, setPools] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterPlan, setFilterPlan] = useState<string>('');
+  const [filterPool, setFilterPool] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedQuery, setDebouncedQuery] = useState<string>('');
   const [genPlan, setGenPlan] = useState<string>('1d');
   const [genCategory, setGenCategory] = useState<Category>('deepseek');
-  const [genCount, setGenCount] = useState(10);
+  const [genCount, setGenCount] = useState(1);
   const [genNotes, setGenNotes] = useState('');
-  /** 自定义天数,留空(0)走 genPlan 套餐;1-3650 = 覆盖套餐天数 */
-  const [genCustomDays, setGenCustomDays] = useState<number>(0);
+  const [genPool, setGenPool] = useState('');
+  const [poolEditingId, setPoolEditingId] = useState<number | null>(null);
+  /**
+   * 自定义天数: 存原始 input 字符串(避免 React 受控 input 在 0/小数开头时被清空)。
+   * 留空 → 走 genPlan 套餐；填数字(>= MIN_CUSTOM_DAYS) → 覆盖套餐天数。
+   */
+  const [genCustomDays, setGenCustomDays] = useState<string>('');
+  const customDaysNum = parseFloat(genCustomDays);
+  const customDaysActive = Number.isFinite(customDaysNum) && customDaysNum > 0;
   const [generating, setGenerating] = useState(false);
   const [newCodes, setNewCodes] = useState<string[]>([]);
   const [copiedAll, setCopiedAll] = useState(false);
@@ -65,6 +80,8 @@ export default function AdminDashboard() {
     const qs = new URLSearchParams();
     if (filterStatus) qs.set('status', filterStatus);
     if (filterPlan) qs.set('plan', filterPlan);
+    if (filterPool) qs.set('pool', filterPool);
+    if (debouncedQuery) qs.set('q', debouncedQuery);
     qs.set('limit', '200');
     const res = await fetch(`/api/admin/cards?${qs}`);
     if (res.status === 401) {
@@ -75,13 +92,20 @@ export default function AdminDashboard() {
     if (body.success) {
       setCards(body.data.cards);
       setStats(body.data.stats);
+      setPools(body.data.pools || []);
     }
     setLoading(false);
   }
 
   useEffect(() => {
     load();
-  }, [filterStatus, filterPlan]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filterStatus, filterPlan, filterPool, debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 300ms debounce: 用户输入 searchQuery -> 延迟更新 debouncedQuery 触发 load
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   async function generate() {
     if (genCount < 1) return;
@@ -96,8 +120,9 @@ export default function AdminDashboard() {
           category: genCategory,
           count: genCount,
           notes: genNotes,
+          pool: genPool.trim() || undefined,
           // custom_days > 0 时后端用它覆盖 plan 的 days
-          custom_days: genCustomDays > 0 ? genCustomDays : undefined,
+          custom_days: customDaysActive ? customDaysNum : undefined,
         }),
       });
       const body = await res.json();
@@ -165,10 +190,48 @@ export default function AdminDashboard() {
     );
   };
 
+  async function setPool(card: CardRow) {
+    const current = card.pool || '';
+    const next = window.prompt(
+      `修改卡密 ${card.code} 的归属号池\n(留空 = 清除归属、最多 64 字符、商家仅可见)`,
+      current
+    );
+    if (next === null) return; // 取消
+    const v = next.trim();
+    if (v === current) return; // 未变
+    setPoolEditingId(card.id);
+    try {
+      const res = await fetch(`/api/admin/cards/${encodeURIComponent(card.code)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_pool', pool: v }),
+      });
+      const body = await res.json();
+      if (!body.success) {
+        alert(`修改归属失败: ${body.message}`);
+      } else {
+        await load();
+      }
+    } catch (e: any) {
+      alert(`修改归属失败: ${e?.message || e}`);
+    } finally {
+      setPoolEditingId(null);
+    }
+  }
+
   async function toggleCard(card: CardRow) {
     const action = card.status === 'disabled' ? 'enable' : 'disable';
     const verb = action === 'disable' ? '禁用' : '取消禁用';
-    if (!confirm(`确定${verb}卡密 ${card.code}?\n\n${action === 'disable' ? '客户的 sk-key 立即失效, NewAPI 同步禁用 token。可以再次取消禁用恢复。' : '恢复 NewAPI token, 客户 sk-key 重新可用。'}`)) return;
+    const hasToken = Boolean(card.newapi_token_key);
+    const detail =
+      action === 'disable'
+        ? hasToken
+          ? '客户的 sk-key 立即失效, NewAPI 同步禁用 token。可以再次取消禁用恢复。'
+          : '这张卡密尚未激活,禁用后客户将无法激活。可以再次取消禁用恢复为未使用。'
+        : hasToken
+          ? '恢复 NewAPI token, 客户 sk-key 重新可用。'
+          : '这张卡密尚未激活,取消禁用后恢复为未使用,客户可以继续激活。';
+    if (!confirm(`确定${verb}卡密 ${card.code}?\n\n${detail}`)) return;
     setTogglingId(card.id);
     try {
       const res = await fetch(`/api/admin/cards/${encodeURIComponent(card.code)}`, {
@@ -251,7 +314,7 @@ export default function AdminDashboard() {
               <select
                 value={genPlan}
                 onChange={(e) => setGenPlan(e.target.value)}
-                disabled={genCustomDays > 0}
+                disabled={customDaysActive}
                 className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-brand-500 focus:outline-none disabled:opacity-50"
               >
                 {PLANS.map((p) => (
@@ -262,16 +325,17 @@ export default function AdminDashboard() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-slate-400" title="留空走套餐;填数字覆盖套餐天数(1-3650)">
-                自定义天数
+              <label className="text-xs text-slate-400" title="留空走套餐;填数字覆盖套餐天数(支持小数，如 0.5=12 小时、0.25=6 小时)">
+                自定义天数 (可填小数)
               </label>
               <input
                 type="number"
                 min={0}
                 max={3650}
-                value={genCustomDays || ''}
-                onChange={(e) => setGenCustomDays(parseInt(e.target.value) || 0)}
-                placeholder="留空=套餐"
+                step={0.5}
+                value={genCustomDays}
+                onChange={(e) => setGenCustomDays(e.target.value)}
+                placeholder="留空=套餐 / 0.5=12h"
                 className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-brand-500 focus:outline-none"
               />
             </div>
@@ -286,7 +350,22 @@ export default function AdminDashboard() {
                 className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-brand-500 focus:outline-none"
               />
             </div>
-            <div className="sm:col-span-2">
+            <div>
+              <label className="text-xs text-slate-400" title="运营标签:号池/批次名,仅管理员可见,客户进入什么都看不到">
+                <FolderTree className="mr-1 inline h-3 w-3" />
+                号池(可选,仅商家可见)
+              </label>
+              <input
+                type="text"
+                value={genPool}
+                onChange={(e) => setGenPool(e.target.value)}
+                placeholder="例如:pro 号池"
+                maxLength={64}
+                list="pool-suggest"
+                className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-brand-500 focus:outline-none"
+              />
+            </div>
+            <div>
               <label className="text-xs text-slate-400">备注(可选)</label>
               <input
                 type="text"
@@ -297,6 +376,12 @@ export default function AdminDashboard() {
               />
             </div>
           </div>
+          {/* 在表单外公用 pool datalist,生成输入 + 后续按钮都能联动 */}
+          <datalist id="pool-suggest">
+            {pools.map((p) => (
+              <option key={p} value={p} />
+            ))}
+          </datalist>
           <button
             onClick={generate}
             disabled={generating || genCount < 1}
@@ -304,7 +389,7 @@ export default function AdminDashboard() {
           >
             {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             生成 {genCount} 个 ·{' '}
-            {genCustomDays > 0 ? `${genCustomDays} 天` : PLANS.find((p) => p.id === genPlan)?.label || genPlan}
+            {customDaysActive ? formatDaysCN(customDaysNum) : PLANS.find((p) => p.id === genPlan)?.label || genPlan}
           </button>
 
           {newCodes.length > 0 && (
@@ -332,7 +417,26 @@ export default function AdminDashboard() {
         <section className="mt-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-medium text-slate-100">卡密列表</h2>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="搜索卡密/备注/sk-key"
+                  className="w-56 rounded border border-slate-700 bg-slate-900 py-1 pl-7 pr-7 text-xs text-slate-200 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    title="清空搜索"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
               <Filter className="h-4 w-4 text-slate-500" />
               <select
                 value={filterStatus}
@@ -357,6 +461,20 @@ export default function AdminDashboard() {
                   </option>
                 ))}
               </select>
+              <select
+                value={filterPool}
+                onChange={(e) => setFilterPool(e.target.value)}
+                title="号池(运营归属标签),仅管理员可见"
+                className="rounded border border-purple-500/40 bg-purple-500/10 px-2 py-1 text-xs text-purple-200"
+              >
+                <option value="">所有号池</option>
+                <option value="__none__">未归属</option>
+                {pools.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={load}
                 className="rounded border border-slate-700 bg-slate-900 p-1.5 text-slate-400 hover:bg-slate-800"
@@ -372,6 +490,7 @@ export default function AdminDashboard() {
                 <tr>
                   <th className="px-3 py-2.5 font-medium">卡密</th>
                   <th className="px-3 py-2.5 font-medium">分类</th>
+                  <th className="px-3 py-2.5 font-medium" title="商家内部号池标签">号池</th>
                   <th className="px-3 py-2.5 font-medium">套餐</th>
                   <th className="px-3 py-2.5 font-medium">状态</th>
                   <th className="px-3 py-2.5 font-medium">创建时间</th>
@@ -385,7 +504,7 @@ export default function AdminDashboard() {
               <tbody>
                 {cards.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-12 text-center text-sm text-slate-500">
+                    <td colSpan={11} className="px-3 py-12 text-center text-sm text-slate-500">
                       暂无数据
                     </td>
                   </tr>
@@ -394,7 +513,16 @@ export default function AdminDashboard() {
                   <tr key={c.id} className="border-b border-slate-800 hover:bg-slate-900/40">
                     <td className="px-3 py-2.5 font-mono text-xs text-slate-200">{c.code}</td>
                     <td className="px-3 py-2.5">{categoryBadge(c.category)}</td>
-                    <td className="px-3 py-2.5 text-slate-300">{c.plan_days}d</td>
+                    <td className="px-3 py-2.5">
+                      {c.pool ? (
+                        <span className="rounded border border-purple-500/40 bg-purple-500/10 px-2 py-0.5 text-xs text-purple-200">
+                          {c.pool}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-600">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-300">{formatDaysCN(c.plan_days)}</td>
                     <td className="px-3 py-2.5">{statusBadge(c.status)}</td>
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.created_at)}</td>
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.activated_at)}</td>
@@ -429,6 +557,19 @@ export default function AdminDashboard() {
                           )}
                           卡密
                         </button>
+                        <button
+                          onClick={() => setPool(c)}
+                          disabled={poolEditingId === c.id}
+                          title="修改运营号池归属(仅商家可见)"
+                          className="flex items-center gap-1 rounded border border-purple-500/40 px-2 py-1 text-xs text-purple-300 hover:bg-purple-500/10 disabled:opacity-50"
+                        >
+                          {poolEditingId === c.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <FolderTree className="h-3 w-3" />
+                          )}
+                          号池
+                        </button>
                         {c.newapi_token_key && (
                           <button
                             onClick={() => copyRow(c.id + 100000, c.newapi_token_key!)}
@@ -438,12 +579,16 @@ export default function AdminDashboard() {
                             Key
                           </button>
                         )}
-                        {c.status === 'activated' && (
+                        {(c.status === 'activated' || c.status === 'unused') && (
                           <button
                             onClick={() => toggleCard(c)}
                             disabled={togglingId === c.id}
                             className="flex items-center gap-1 rounded border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-50"
-                            title="禁用此卡 + 同步禁用 NewAPI token"
+                            title={
+                              c.newapi_token_key
+                                ? '禁用此卡 + 同步禁用 NewAPI token'
+                                : '禁用未激活卡密,阻止客户激活'
+                            }
                           >
                             {togglingId === c.id ? (
                               <Loader2 className="h-3 w-3 animate-spin" />

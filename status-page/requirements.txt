@@ -1,0 +1,7 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+psutil==6.1.0
+PyMySQL==1.1.1
+APScheduler==3.10.4
+pydantic==2.9.2
+docker==7.1.0

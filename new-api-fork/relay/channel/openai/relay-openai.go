@@ -27,6 +27,9 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
+	// 严格伪装：把每帧 SSE 数据里的下游模型名替换为客户端原始请求模型名
+	data = maskUpstreamModelInData(data, info)
+
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
 	}
@@ -228,6 +231,22 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	if shouldRetryEmptyMinimaxDeepSeekResponse(info, &simpleResponse) {
+		return nil, types.WithOpenAIError(types.OpenAIError{
+			Message: "upstream returned empty content with finish_reason=length",
+			Type:    "upstream_error",
+			Code:    "empty_content_length",
+		}, http.StatusBadGateway)
+	}
+
+	// 严格伪装：把响应中的下游模型名替换为客户端原始请求模型名
+	if info.IsModelMapped && info.OriginModelName != "" && info.UpstreamModelName != "" && info.UpstreamModelName != info.OriginModelName {
+		simpleResponse.Model = info.OriginModelName
+		responseBody = []byte(strings.ReplaceAll(string(responseBody),
+			`"model":"`+info.UpstreamModelName+`"`,
+			`"model":"`+info.OriginModelName+`"`))
+	}
+
 	for _, choice := range simpleResponse.Choices {
 		if choice.FinishReason == constant.FinishReasonContentFilter {
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "openai_finish_reason=content_filter")
@@ -297,6 +316,33 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	return &simpleResponse.Usage, nil
+}
+
+func shouldRetryEmptyMinimaxDeepSeekResponse(info *relaycommon.RelayInfo, response *dto.OpenAITextResponse) bool {
+	if info == nil || response == nil {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(info.OriginModelName), "deepseek-v4-") {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(info.UpstreamModelName), "minimax-") {
+		return false
+	}
+	if len(response.Choices) == 0 {
+		return false
+	}
+
+	for _, choice := range response.Choices {
+		if strings.TrimSpace(choice.FinishReason) != constant.FinishReasonLength {
+			return false
+		}
+		if strings.TrimSpace(choice.Message.StringContent()) != "" ||
+			strings.TrimSpace(choice.Message.GetReasoningContent()) != "" ||
+			len(choice.Message.ParseToolCalls()) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func streamTTSResponse(c *gin.Context, resp *http.Response) {

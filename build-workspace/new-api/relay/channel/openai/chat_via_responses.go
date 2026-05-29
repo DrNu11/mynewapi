@@ -56,6 +56,7 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		SanitizeUpstreamError(oaiError, info)
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
@@ -498,6 +499,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		case "response.error", "response.failed":
 			if streamResp.Response != nil {
 				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
+					SanitizeUpstreamError(oaiErr, info)
 					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
 					sr.Stop(streamErr)
 					return
