@@ -22,6 +22,8 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useStatus } from '@/hooks/use-status'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
 
+const DEFAULT_DOCS_URL = 'https://docs.nassaapi.xyz/使用文档'
+
 export type TopNavLink = {
   title: string
   href: string
@@ -55,7 +57,7 @@ export function useTopNavLinks(): TopNavLink[] {
   }, [status])
 
   // Documentation link (may be external)
-  const docsLink: string | undefined = status?.docs_link as string | undefined
+  const docsLink: string | undefined = DEFAULT_DOCS_URL
 
   const isAuthed = !!auth?.user
 
@@ -90,7 +92,7 @@ export function useTopNavLinks(): TopNavLink[] {
     if (docsLink) {
       links.push({ title: t('Docs'), href: docsLink, external: true })
     } else {
-      links.push({ title: t('Docs'), href: '/docs' })
+      links.push({ title: t('Docs'), href: DEFAULT_DOCS_URL, external: true })
     }
   }
 
