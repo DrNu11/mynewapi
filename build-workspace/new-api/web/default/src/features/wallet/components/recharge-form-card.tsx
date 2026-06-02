@@ -424,9 +424,9 @@ export function RechargeFormCard({
           <div className='bg-background mb-4 flex size-12 items-center justify-center rounded-lg border shadow-sm'>
             <ExternalLink className='text-muted-foreground size-5' />
           </div>
-          <div className='text-base font-medium'>{t('Go to online store')}</div>
+          <div className='text-base font-medium'>前往在线商店</div>
           <p className='text-muted-foreground mt-2 max-w-sm text-sm'>
-            {t('Buy a recharge code from the store, then redeem it here.')}
+            请先在商店购买充值码，然后回到这里兑换。
           </p>
           <Button
             className='mt-4 gap-2'
@@ -435,7 +435,7 @@ export function RechargeFormCard({
             }
           >
             <ExternalLink className='size-4' />
-            {t('Open recharge store')}
+            打开充值商店
           </Button>
         </div>
       )}
@@ -501,15 +501,7 @@ export function RechargeFormCard({
             </p>
           )}
         </div>
-      ) : (
-        <Alert className='border-t'>
-          <AlertDescription>
-            {t(
-              'Redemption codes are disabled until the administrator confirms compliance terms.'
-            )}
-          </AlertDescription>
-        </Alert>
-      )}
+      ) : null}
     </TitledCard>
   )
 }
