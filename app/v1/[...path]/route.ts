@@ -12,8 +12,8 @@
 import { NextRequest } from 'next/server';
 import {
   getCardByTokenKey,
-  countCurrentHourRequests,
-  recordRequest,
+  reserveCurrentHourRequest,
+  updateRequestLogStatus,
 } from '@/lib/db';
 import { isCategory, legacyModels, modelsForCategory } from '@/lib/categories';
 import {
@@ -25,6 +25,7 @@ import {
 } from '@/lib/audit';
 import { normalizeMessages, normalizeResponsesInput } from '@/lib/normalize-messages';
 import { makeThinkStripTransform } from '@/lib/strip-think';
+import { getTokenUsageQuotaSince, NEWAPI_QUOTA_PER_USD } from '@/lib/newapi-db';
 // side-effect import:启动后台清理 cron(每 6h 跑 markExpiredCards / pruneOldRequests / pruneOldAudit)
 import '@/lib/cleanup-bootstrap';
 
@@ -39,6 +40,21 @@ const NEWAPI_UPSTREAM = (
   process.env.NEWAPI_BASE_URL ||
   'https://api.nassaapi.xyz'
 ).replace(/\/$/, '');
+
+const DAY_CARD_DAILY_CAP_USD = 250;
+const DAY_CARD_DAILY_CAP_QUOTA = DAY_CARD_DAILY_CAP_USD * NEWAPI_QUOTA_PER_USD;
+
+function shanghaiDayStartSec(nowSec = Math.floor(Date.now() / 1000)): number {
+  return Math.floor((nowSec + 8 * 3600) / 86400) * 86400 - 8 * 3600;
+}
+
+function nextShanghaiDayStartSec(nowSec = Math.floor(Date.now() / 1000)): number {
+  return shanghaiDayStartSec(nowSec) + 86400;
+}
+
+function formatUsdFromQuota(quota: number): string {
+  return (quota / NEWAPI_QUOTA_PER_USD).toFixed(2);
+}
 
 /**
  * 错误响应工具 — 模仿上游 NewAPI 的 401/403 响应格式,
@@ -297,26 +313,18 @@ async function handle(req: NextRequest, pathParts: string[]) {
   if (card.status === 'expired' || (card.expires_at && card.expires_at <= now)) {
     return jsonError(403, '卡密已过期', 'forbidden');
   }
+  if (card.status === 'disabled') {
+    return jsonError(
+      403,
+      card.disable_reason || '该卡密已被禁用,请联系客服',
+      'forbidden',
+    );
+  }
   if (card.status !== 'activated') {
     return jsonError(403, `卡密状态异常: ${card.status}`, 'forbidden');
   }
 
-  // 4. RPH 限速 — 整点固定窗口(每小时 hh:00 重置)
-  if (card.rph > 0) {
-    const { used, nextResetAt } = countCurrentHourRequests(sk);
-    if (used >= card.rph) {
-      const retryAfter = Math.max(1, nextResetAt - Math.floor(Date.now() / 1000));
-      const resp = jsonError(
-        429,
-        `每小时请求数已达上限 ${card.rph} 次,${retryAfter} 秒后(整点)重置`,
-        'rate_limit_exceeded'
-      );
-      resp.headers.set('retry-after', String(retryAfter));
-      return resp;
-    }
-  }
-
-  // 5. 读 body 一次,顺便解析出客户请求的 model(用于响应伪装)
+  // 4. 读 body 一次,顺便解析出客户请求的 model(用于响应伪装)
   //    并按路径做 system role 规范化，适配 MiniMax 等上游对 system 的双约束:
   //      - /v1/chat/completions:        normalizeMessages(body.messages)
   //      - /v1/responses (codex CLI):   normalizeResponsesInput(body.input)
@@ -374,7 +382,7 @@ async function handle(req: NextRequest, pathParts: string[]) {
     }
   }
 
-  // 5.1 model 白名单 — 客户请求的 model 不在该套餐许可列表直接 400,不浪费上游
+  // 4.1 model 白名单 — 客户请求的 model 不在该套餐许可列表直接 400,不浪费上游
   if (requestedModel) {
     const allowed = isCategory(card.category)
       ? modelsForCategory(card.category)
@@ -386,6 +394,57 @@ async function handle(req: NextRequest, pathParts: string[]) {
         'model_not_available'
       );
     }
+  }
+
+  // 4.2 日卡每日成本保护 — 防止 1d 无限额 token 被并发爆刷。
+  // 口径:NewAPI logs 里该 token 从北京时间当天 00:00 起的真实消耗 quota。
+  if (card.plan === '1d' && card.newapi_token_id) {
+    let usedQuotaToday = 0;
+    try {
+      usedQuotaToday = await getTokenUsageQuotaSince(
+        card.newapi_token_id,
+        shanghaiDayStartSec(now),
+      );
+    } catch (e) {
+      console.error('[v1-proxy] daily cap check failed:', e);
+      return jsonError(
+        503,
+        '日卡额度保护校验失败,为防止异常扣费已暂停本次请求,请稍后重试',
+        'service_unavailable',
+      );
+    }
+
+    if (usedQuotaToday >= DAY_CARD_DAILY_CAP_QUOTA) {
+      const retryAfter = Math.max(1, nextShanghaiDayStartSec(now) - now);
+      const resp = jsonError(
+        429,
+        `日卡今日使用额度已达 $${DAY_CARD_DAILY_CAP_USD} 上限,为防止异常并发爆刷已暂停请求,明天 00:00 后自动恢复。当前统计: $${formatUsdFromQuota(usedQuotaToday)}`,
+        'rate_limit_exceeded',
+      );
+      resp.headers.set('retry-after', String(retryAfter));
+      return resp;
+    }
+  }
+
+  // 5. RPH 限速 — 整点固定窗口(每小时 hh:00 重置)。
+  // 用事务先占一个 request_logs 槽位,把 in-flight 请求也算进去,防止并发同时通过检查后超发。
+  let requestLogId: number | null = null;
+  if (card.rph > 0) {
+    const reservation = reserveCurrentHourRequest(sk, card.id, card.rph, requestedModel);
+    if (!reservation.allowed) {
+      const retryAfter = Math.max(1, reservation.nextResetAt - Math.floor(Date.now() / 1000));
+      const resp = jsonError(
+        429,
+        `每小时请求数已达上限 ${card.rph} 次,${retryAfter} 秒后(整点)重置`,
+        'rate_limit_exceeded'
+      );
+      resp.headers.set('retry-after', String(retryAfter));
+      return resp;
+    }
+    requestLogId = reservation.logId ?? null;
+  } else {
+    const reservation = reserveCurrentHourRequest(sk, card.id, 0, requestedModel);
+    requestLogId = reservation.logId ?? null;
   }
 
   // 6. 构造上游 URL
@@ -470,6 +529,11 @@ async function handle(req: NextRequest, pathParts: string[]) {
         });
       } catch { }
     }
+    if (requestLogId !== null) {
+      try {
+        updateRequestLogStatus(requestLogId, 502, requestedModel);
+      } catch { }
+    }
     return jsonError(502, `上游 NewAPI 服务无法访问: ${msg}`, 'service_unavailable');
   }
 
@@ -480,11 +544,13 @@ async function handle(req: NextRequest, pathParts: string[]) {
     } catch { }
   }
 
-  // 9. 记录调用(带客户请求的模型名)
-  try {
-    recordRequest(sk, card.id, upstream.status, requestedModel);
-  } catch (e) {
-    console.error('[v1-proxy] recordRequest failed:', e);
+  // 9. 补全预占的调用日志状态(带客户请求的模型名)
+  if (requestLogId !== null) {
+    try {
+      updateRequestLogStatus(requestLogId, upstream.status, requestedModel);
+    } catch (e) {
+      console.error('[v1-proxy] updateRequestLogStatus failed:', e);
+    }
   }
 
   // 10. 透传响应,清掉影响流式的头

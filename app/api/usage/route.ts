@@ -53,6 +53,12 @@ export async function POST(req: NextRequest) {
   if (!card) {
     return NextResponse.json({ success: false, message: 'sk 不存在' }, { status: 404 });
   }
+  if (card.status === 'disabled') {
+    return NextResponse.json(
+      { success: false, message: card.disable_reason || '该卡密已被禁用,请联系客服' },
+      { status: 403 }
+    );
+  }
 
   const { used, hourStart, nextResetAt } = countCurrentHourRequests(sk);
   const rph = card.rph || 0;

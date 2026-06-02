@@ -34,9 +34,11 @@ function init(inst: Database.Database) {
       activated_at INTEGER,
       expires_at INTEGER,
       claimed_at INTEGER,
+      newapi_user_id INTEGER,
       newapi_token_id INTEGER,
       newapi_token_key TEXT,
       activator_ip TEXT,
+      disable_reason TEXT,
       notes TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_cards_code ON cards(code);
@@ -99,6 +101,13 @@ function init(inst: Database.Database) {
     inst.exec('ALTER TABLE cards ADD COLUMN pool TEXT');
     inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_pool ON cards(pool)');
   }
+  if (!cols.some((c) => c.name === 'newapi_user_id')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN newapi_user_id INTEGER');
+  }
+  if (!cols.some((c) => c.name === 'disable_reason')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN disable_reason TEXT');
+  }
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_newapi_user_id ON cards(newapi_user_id)');
   // request_logs 老库补 model 列(新建库已在上面 CREATE 时带上)
   const rlCols = inst.prepare('PRAGMA table_info(request_logs)').all() as Array<{ name: string }>;
   if (!rlCols.some((c) => c.name === 'model')) {
@@ -122,14 +131,40 @@ export interface Card {
   activated_at: number | null;
   expires_at: number | null;
   claimed_at: number | null;
+  /** 激活时把 NewAPI token 创建到这个用户 ID 下;NULL = 使用默认 NEWAPI_USER_ID */
+  newapi_user_id: number | null;
   newapi_token_id: number | null;
   newapi_token_key: string | null;
   activator_ip: string | null;
+  disable_reason: string | null;
   notes: string | null;
 }
 
 export function getCardByCode(code: string): Card | null {
   return (db().prepare('SELECT * FROM cards WHERE code = ?').get(code) as Card) || null;
+}
+
+export function countActivatedCardsForTokenPlan(args: {
+  tokenId: number;
+  tokenKey?: string | null;
+  category: string;
+  plan: string;
+}): number {
+  const tokenWhere = args.tokenKey
+    ? '(newapi_token_id = ? OR newapi_token_key = ?)'
+    : 'newapi_token_id = ?';
+  const tokenParams = args.tokenKey ? [args.tokenId, args.tokenKey] : [args.tokenId];
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS c
+       FROM cards
+       WHERE ${tokenWhere}
+         AND category = ?
+         AND plan = ?
+         AND status = 'activated'`,
+    )
+    .get(...tokenParams, args.category, args.plan) as { c: number } | undefined;
+  return Number(row?.c || 0);
 }
 
 /**
@@ -161,8 +196,8 @@ export function releaseCardClaim(code: string): void {
 
 export function insertCard(row: Omit<Card, 'id'>): number {
   const stmt = db().prepare(`
-    INSERT INTO cards (code, plan, plan_days, category, rph, pool, status, created_at, activated_at, expires_at, newapi_token_id, newapi_token_key, activator_ip, notes)
-    VALUES (@code, @plan, @plan_days, @category, @rph, @pool, @status, @created_at, @activated_at, @expires_at, @newapi_token_id, @newapi_token_key, @activator_ip, @notes)
+    INSERT INTO cards (code, plan, plan_days, category, rph, pool, status, created_at, activated_at, expires_at, newapi_user_id, newapi_token_id, newapi_token_key, activator_ip, disable_reason, notes)
+    VALUES (@code, @plan, @plan_days, @category, @rph, @pool, @status, @created_at, @activated_at, @expires_at, @newapi_user_id, @newapi_token_id, @newapi_token_key, @activator_ip, @disable_reason, @notes)
   `);
   const info = stmt.run(row);
   return info.lastInsertRowid as number;
@@ -182,6 +217,14 @@ export function setCardPool(code: string, pool: string | null): Card | null {
   if (!card) return null;
   const v = pool && pool.trim() ? pool.trim().slice(0, 64) : null;
   db().prepare('UPDATE cards SET pool = ? WHERE code = ?').run(v, code);
+  return getCardByCode(code);
+}
+
+/** 设置/清除单卡绑定的 NewAPI 用户 ID;已激活卡只改变本地标注,不会迁移历史 token。 */
+export function setCardNewApiUserId(code: string, userId: number | null): Card | null {
+  const card = getCardByCode(code);
+  if (!card) return null;
+  db().prepare('UPDATE cards SET newapi_user_id = ? WHERE code = ?').run(userId, code);
   return getCardByCode(code);
 }
 
@@ -225,6 +268,36 @@ export function countCurrentHourRequests(skKey: string): {
   return { used: row.c, hourStart, nextResetAt };
 }
 
+export function reserveCurrentHourRequest(
+  skKey: string,
+  cardId: number,
+  rph: number,
+  model?: string | null
+): { allowed: boolean; used: number; nextResetAt: number; logId?: number } {
+  const now = Math.floor(Date.now() / 1000);
+  const hourStart = Math.floor(now / 3600) * 3600;
+  const nextResetAt = hourStart + 3600;
+  const tx = db().transaction(() => {
+    const row = db()
+      .prepare('SELECT COUNT(*) as c FROM request_logs WHERE sk_key = ? AND ts >= ?')
+      .get(skKey, hourStart) as { c: number };
+    const used = row.c || 0;
+    if (rph > 0 && used >= rph) {
+      return { allowed: false, used, nextResetAt };
+    }
+    const info = db()
+      .prepare('INSERT INTO request_logs (sk_key, card_id, ts, status, model) VALUES (?, ?, ?, ?, ?)')
+      .run(skKey, cardId, now, 0, model ?? null);
+    return {
+      allowed: true,
+      used: used + 1,
+      nextResetAt,
+      logId: Number(info.lastInsertRowid),
+    };
+  });
+  return tx() as { allowed: boolean; used: number; nextResetAt: number; logId?: number };
+}
+
 /** 记录一次 sk-key 调用 */
 export function recordRequest(
   skKey: string,
@@ -235,6 +308,11 @@ export function recordRequest(
   db().prepare(
     'INSERT INTO request_logs (sk_key, card_id, ts, status, model) VALUES (?, ?, ?, ?, ?)'
   ).run(skKey, cardId, Math.floor(Date.now() / 1000), status ?? null, model ?? null);
+}
+
+export function updateRequestLogStatus(logId: number, status?: number, model?: string | null): void {
+  db().prepare('UPDATE request_logs SET status = ?, model = COALESCE(?, model) WHERE id = ?')
+    .run(status ?? null, model ?? null, logId);
 }
 
 /** 当前自然小时内 sk-key 调用过的模型分布(按次数倒序) */
@@ -401,6 +479,22 @@ export function getRequestCountsByCardIds(
   return m;
 }
 
+/** 批量查多张卡当前自然小时请求数(admin 列表用),口径与 RPH 限速一致。 */
+export function getCurrentHourRequestCountsByCardIds(cardIds: number[]): Record<number, number> {
+  if (cardIds.length === 0) return {};
+  const now = Math.floor(Date.now() / 1000);
+  const hourStart = Math.floor(now / 3600) * 3600;
+  const placeholders = cardIds.map(() => '?').join(',');
+  const rows = db()
+    .prepare(
+      `SELECT card_id, COUNT(*) as c FROM request_logs WHERE ts >= ? AND card_id IN (${placeholders}) GROUP BY card_id`
+    )
+    .all(hourStart, ...cardIds) as Array<{ card_id: number; c: number }>;
+  const m: Record<number, number> = {};
+  for (const r of rows) m[r.card_id] = r.c;
+  return m;
+}
+
 /**
  * 切换卡密状态(admin 用):
  *   - 'disable': 任何状态 → 'disabled' (主要用于已激活的卡, 配合 NewAPI token 禁用一起用)
@@ -408,15 +502,16 @@ export function getRequestCountsByCardIds(
  *
  * 返回更新后的 Card; 找不到返回 null。
  */
-export function setCardStatus(code: string, action: 'disable' | 'enable'): Card | null {
+export function setCardStatus(code: string, action: 'disable' | 'enable', reason?: string | null): Card | null {
   const card = getCardByCode(code);
   if (!card) return null;
   if (action === 'disable') {
-    db().prepare(`UPDATE cards SET status='disabled' WHERE code=?`).run(code);
+    const v = reason && reason.trim() ? reason.trim().slice(0, 500) : null;
+    db().prepare(`UPDATE cards SET status='disabled', disable_reason=? WHERE code=?`).run(v, code);
   } else {
     // enable: 已激活的卡 → 'activated'; 没激活过的卡 → 'unused'
     const restored = card.newapi_token_key ? 'activated' : 'unused';
-    db().prepare(`UPDATE cards SET status=? WHERE code=?`).run(restored, code);
+    db().prepare(`UPDATE cards SET status=?, disable_reason=NULL WHERE code=?`).run(restored, code);
   }
   return getCardByCode(code);
 }
@@ -452,10 +547,10 @@ export function listCards(opts: { status?: string; plan?: string; pool?: string;
     where.push('pool = ?'); params.push(pool);
   }
   if (q) {
-    // 模糊搜索: 卡密 / 备注 / NewAPI sk-key
-    where.push('(code LIKE ? OR notes LIKE ? OR newapi_token_key LIKE ?)');
+    // 模糊搜索: 卡密 / 备注 / NewAPI sk-key / NewAPI 用户 ID
+    where.push('(code LIKE ? OR notes LIKE ? OR newapi_token_key LIKE ? OR CAST(newapi_user_id AS TEXT) LIKE ?)');
     const like = `%${q}%`;
-    params.push(like, like, like);
+    params.push(like, like, like, like);
   }
   const sql = `SELECT * FROM cards ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT ? OFFSET ?`;
   return db().prepare(sql).all(...params, limit, offset) as Card[];
@@ -528,6 +623,7 @@ export function applyRenewal(args: {
   addedDays: number;
   newapiTokenId: number;
   newapiTokenKey: string;
+  newapiUserId: number | null;
   renewalIp: string | null;
 }): number {
   const now = Math.floor(Date.now() / 1000);
@@ -554,12 +650,13 @@ export function applyRenewal(args: {
       SET status = 'activated',
           activated_at = ?,
           expires_at = ?,
+          newapi_user_id = ?,
           newapi_token_id = ?,
           newapi_token_key = ?,
           activator_ip = ?,
           claimed_at = NULL
       WHERE id = ? AND status = 'activating'
-    `).run(now, args.afterExpiresAt, args.newapiTokenId, args.newapiTokenKey,
+    `).run(now, args.afterExpiresAt, args.newapiUserId, args.newapiTokenId, args.newapiTokenKey,
       args.renewalIp, args.renewalCardId);
     if (u2.changes !== 1) throw new Error('renewal card finalize failed (state changed?)');
 
