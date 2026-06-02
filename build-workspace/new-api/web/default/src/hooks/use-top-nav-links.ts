@@ -22,7 +22,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useStatus } from '@/hooks/use-status'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
 
-const DEFAULT_DOCS_URL = 'https://docs.nassaapi.xyz/使用文档'
+const DEFAULT_DOCS_URL = 'https://docs.nassaapi.xyz'
 
 export type TopNavLink = {
   title: string

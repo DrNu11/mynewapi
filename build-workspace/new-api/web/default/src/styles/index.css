@@ -763,6 +763,35 @@ For commercial licensing, please contact support@quantumnous.com
   z-index: 1;
 }
 
+.nassa-protocol-tab {
+  border: 0;
+  background: transparent;
+  color: #86868b;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  transition:
+    color 700ms var(--nassa-ease),
+    text-shadow 700ms var(--nassa-ease),
+    transform 700ms var(--nassa-ease);
+}
+
+.nassa-protocol-tab:hover,
+.nassa-protocol-tab[data-active='true'] {
+  color: #f5f5f7;
+  text-shadow: 0 0 18px rgba(245, 245, 247, 0.2);
+}
+
+.nassa-protocol-tab:active {
+  transform: scale(0.96);
+}
+
+.nassa-protocol-tab:focus-visible {
+  border-radius: 999px;
+  outline: 2px solid rgba(245, 245, 247, 0.5);
+  outline-offset: 5px;
+}
+
 .nassa-code-lines {
   min-height: 126px;
   overflow: hidden;

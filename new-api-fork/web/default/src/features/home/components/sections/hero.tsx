@@ -18,8 +18,88 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, BookOpen } from 'lucide-react'
+import { useState } from 'react'
 
-const DOCS_URL = 'https://docs.nassaapi.xyz/使用文档'
+const DOCS_URL = 'https://docs.nassaapi.xyz'
+
+const API_PROTOCOLS = [
+  {
+    id: 'chat',
+    label: 'Chat',
+    endpoint: '/v1/chat/completions',
+    request: [
+      'curl -X POST "/v1/chat/completions" \\',
+      '-H "Authorization: Bearer sk-••••" \\',
+      '-d \'{"model":"DeepSeek"}\'',
+    ],
+    response: [
+      '{ "choices": [',
+      '"content": "已路由到最佳通道"',
+      '], "total_tokens": 27 }',
+    ],
+    latency: '142 MS',
+    tokens: '27 TOKENS',
+    cost: 'COST $0.00081',
+    stream: 'STREAM · SSE',
+  },
+  {
+    id: 'responses',
+    label: 'Responses',
+    endpoint: '/v1/responses',
+    request: [
+      'curl -X POST "/v1/responses" \\',
+      '-H "Authorization: Bearer sk-••••" \\',
+      '-d \'{"model":"DeepSeek"}\'',
+    ],
+    response: [
+      '{ "output": [',
+      '"text": "统一响应协议已接入"',
+      '], "status": "completed" }',
+    ],
+    latency: '118 MS',
+    tokens: '31 TOKENS',
+    cost: 'COST $0.00093',
+    stream: 'JSON',
+  },
+  {
+    id: 'claude',
+    label: 'Claude',
+    endpoint: '/v1/messages',
+    request: [
+      'curl -X POST "/v1/messages" \\',
+      '-H "anthropic-version: 2023-06-01" \\',
+      '-d \'{"model":"DeepSeek"}\'',
+    ],
+    response: [
+      '{ "content": [',
+      '"text": "Claude 协议兼容成功"',
+      '], "stop_reason": "end_turn" }',
+    ],
+    latency: '156 MS',
+    tokens: '34 TOKENS',
+    cost: 'COST $0.00102',
+    stream: 'STREAM · SSE',
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini',
+    endpoint: '/v1beta/models/gemini:generateContent',
+    request: [
+      'curl -X POST "/v1beta/models/gemini:generateContent" \\',
+      '-H "x-goog-api-key: sk-••••" \\',
+      '-d \'{"model":"DeepSeek"}\'',
+    ],
+    response: [
+      '{ "candidates": [',
+      '"text": "Gemini 协议已转换"',
+      '], "finishReason": "STOP" }',
+    ],
+    latency: '163 MS',
+    tokens: '29 TOKENS',
+    cost: 'COST $0.00087',
+    stream: 'JSON',
+  },
+] as const
 
 interface HeroProps {
   className?: string
@@ -27,6 +107,12 @@ interface HeroProps {
 }
 
 export function Hero(props: HeroProps) {
+  const [activeProtocolId, setActiveProtocolId] =
+    useState<(typeof API_PROTOCOLS)[number]['id']>('chat')
+  const activeProtocol =
+    API_PROTOCOLS.find((protocol) => protocol.id === activeProtocolId) ??
+    API_PROTOCOLS[0]
+
   return (
     <section className='relative z-10 flex min-h-[760px] flex-col justify-center overflow-hidden bg-[#000000] px-6 pt-32 pb-20 md:min-h-[840px] md:pt-40 md:pb-28'>
       <div
@@ -73,12 +159,23 @@ export function Hero(props: HeroProps) {
             style={{ animationDelay: '400ms' }}
           >
             {props.isAuthenticated ? (
-              <Link
-                to='/dashboard'
-                className='hig-primary-action inline-flex h-12 items-center justify-center rounded-full bg-[#F5F5F7] px-7 text-[15px] font-medium text-[#000000]'
-              >
-                进入控制台
-              </Link>
+              <>
+                <Link
+                  to='/dashboard'
+                  className='hig-primary-action inline-flex h-12 items-center justify-center rounded-full bg-[#F5F5F7] px-7 text-[15px] font-medium text-[#000000]'
+                >
+                  进入控制台
+                </Link>
+                <a
+                  href={DOCS_URL}
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  className='group inline-flex h-12 items-center justify-center rounded-full px-2 text-[15px] font-medium text-[#F5F5F7] transition-colors duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-white'
+                >
+                  使用文档
+                  <ArrowRight className='ml-1.5 size-4 transition-transform duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5' />
+                </a>
+              </>
             ) : (
               <>
                 <Link
@@ -108,10 +205,17 @@ export function Hero(props: HeroProps) {
           <div className='nassa-code-demo'>
             <div className='flex items-center justify-between border-b border-white/8 px-5 py-4 text-xs text-[#86868B]'>
               <div className='flex items-center gap-5'>
-                <span className='font-medium text-[#F5F5F7]'>Chat</span>
-                <span>Responses</span>
-                <span>Claude</span>
-                <span>Gemini</span>
+                {API_PROTOCOLS.map((protocol) => (
+                  <button
+                    key={protocol.id}
+                    type='button'
+                    onClick={() => setActiveProtocolId(protocol.id)}
+                    className='nassa-protocol-tab'
+                    data-active={protocol.id === activeProtocol.id}
+                  >
+                    {protocol.label}
+                  </button>
+                ))}
               </div>
               <div className='flex items-center gap-2'>
                 <span className='size-2 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.85)]' />
@@ -122,9 +226,9 @@ export function Hero(props: HeroProps) {
               <span className='rounded-full bg-emerald-400/10 px-2 py-1 text-xs font-semibold text-emerald-300'>
                 POST
               </span>
-              <span className='ml-3 text-[#D6D6DA]'>/v1/chat/completions</span>
+              <span className='ml-3 text-[#D6D6DA]'>{activeProtocol.endpoint}</span>
             </div>
-            <div className='grid md:grid-cols-2'>
+            <div key={activeProtocol.id} className='grid md:grid-cols-2'>
               <div className='border-white/8 p-5 md:border-r'>
                 <p className='mb-4 text-xs tracking-[0.18em] text-[#86868B] uppercase'>
                   Request
@@ -132,13 +236,13 @@ export function Hero(props: HeroProps) {
                 <pre className='nassa-code-lines'>
                   <code>
                     <span className='nassa-typed-line nassa-gradient-text nassa-line-1'>
-                      curl -X POST &quot;/v1/chat/completions&quot; \
+                      {activeProtocol.request[0]}
                     </span>
                     <span className='nassa-typed-line nassa-line-2 text-[#9CDCFE]'>
-                      -H &quot;Authorization: Bearer sk-••••&quot; \
+                      {activeProtocol.request[1]}
                     </span>
                     <span className='nassa-typed-line nassa-line-3 text-[#CE9178]'>
-                      -d '&#123;&quot;model&quot;:&quot;DeepSeek&quot;&#125;'
+                      {activeProtocol.request[2]}
                     </span>
                   </code>
                 </pre>
@@ -150,23 +254,23 @@ export function Hero(props: HeroProps) {
                 <pre className='nassa-code-lines'>
                   <code>
                     <span className='nassa-typed-line nassa-line-4 text-[#D6D6DA]'>
-                      &#123; &quot;choices&quot;: [
+                      {activeProtocol.response[0]}
                     </span>
                     <span className='nassa-typed-line nassa-gradient-text nassa-line-5'>
-                      &quot;content&quot;: &quot;已路由到最佳通道&quot;
+                      {activeProtocol.response[1]}
                     </span>
                     <span className='nassa-typed-line nassa-line-6 text-[#B5CEA8]'>
-                      ], &quot;total_tokens&quot;: 27 &#125;
+                      {activeProtocol.response[2]}
                     </span>
                   </code>
                 </pre>
               </div>
             </div>
             <div className='flex items-center justify-between border-t border-white/8 px-5 py-3 font-mono text-xs text-[#86868B]'>
-              <span>142 MS</span>
-              <span>27 TOKENS</span>
-              <span>COST $0.00081</span>
-              <span>STREAM · SSE</span>
+              <span>{activeProtocol.latency}</span>
+              <span>{activeProtocol.tokens}</span>
+              <span>{activeProtocol.cost}</span>
+              <span>{activeProtocol.stream}</span>
             </div>
           </div>
           <a
