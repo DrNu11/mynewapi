@@ -67,12 +67,12 @@ interface PlaygroundInputProps {
 }
 
 const suggestions = [
-  { icon: BarChartIcon, text: 'Analyze data', color: '#76d0eb' },
-  { icon: BoxIcon, text: 'Surprise me', color: '#76d0eb' },
-  { icon: NotepadTextIcon, text: 'Summarize text', color: '#ea8444' },
-  { icon: CodeSquareIcon, text: 'Code', color: '#6c71ff' },
-  { icon: GraduationCapIcon, text: 'Get advice', color: '#76d0eb' },
-  { icon: null, text: 'More' },
+  { icon: BarChartIcon, text: '分析数据', color: '#76d0eb' },
+  { icon: BoxIcon, text: '给我一个灵感', color: '#76d0eb' },
+  { icon: NotepadTextIcon, text: '总结文本', color: '#ea8444' },
+  { icon: CodeSquareIcon, text: '写代码', color: '#6c71ff' },
+  { icon: GraduationCapIcon, text: '给点建议', color: '#76d0eb' },
+  { icon: null, text: '更多' },
 ]
 
 export function PlaygroundInput({
@@ -223,7 +223,7 @@ export function PlaygroundInput({
         {suggestions.map(({ icon: Icon, text, color }) => (
           <Suggestion
             className={`text-xs font-normal sm:text-sm ${
-              text === 'More' ? 'hidden sm:flex' : ''
+              text === '更多' ? 'hidden sm:flex' : ''
             }`}
             key={text}
             onClick={() => handleSuggestionClick(text)}

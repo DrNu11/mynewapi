@@ -23,7 +23,28 @@ import { PlaygroundChat } from './components/playground-chat'
 import { PlaygroundInput } from './components/playground-input'
 import { usePlaygroundState, useChatHandler } from './hooks'
 import { createUserMessage, createLoadingAssistantMessage } from './lib'
+import { DEFAULT_CONFIG } from './constants'
 import type { Message as MessageType } from './types'
+
+const LEGACY_GPT_DEFAULTS = new Set(['gpt-4o'])
+
+const pickPreferredModel = (
+  modelsData: { value: string; label?: string }[],
+  currentModel: string
+) => {
+  const isCurrentModelValid = modelsData.some((m) => m.value === currentModel)
+  if (isCurrentModelValid && !LEGACY_GPT_DEFAULTS.has(currentModel)) {
+    return currentModel
+  }
+
+  return (
+    modelsData.find((m) =>
+      `${m.value} ${m.label ?? ''}`.toLowerCase().includes('deepseek')
+    )?.value ??
+    modelsData.find((m) => m.value === DEFAULT_CONFIG.model)?.value ??
+    modelsData[0]?.value
+  )
+}
 
 export function Playground() {
   const {
@@ -67,10 +88,9 @@ export function Playground() {
 
     setModels(modelsData)
 
-    // Set default model if current model is not available
-    const isCurrentModelValid = modelsData.some((m) => m.value === config.model)
-    if (modelsData.length > 0 && !isCurrentModelValid) {
-      updateConfig('model', modelsData[0].value)
+    const preferredModel = pickPreferredModel(modelsData, config.model)
+    if (preferredModel && preferredModel !== config.model) {
+      updateConfig('model', preferredModel)
     }
   }, [modelsData, config.model, setModels, updateConfig])
 
