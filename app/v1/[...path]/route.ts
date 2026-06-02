@@ -306,18 +306,47 @@ function makeResilientBody(
     async start(controller) {
       const reader = source.getReader();
       let sentAny = false;
+      let closed = false;
+      const safeEnqueue = (chunk: Uint8Array): boolean => {
+        if (closed) return false;
+        try {
+          controller.enqueue(chunk);
+          return true;
+        } catch (e) {
+          closed = true;
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!msg.includes('Controller is already closed')) {
+            console.error('[v1-proxy] response stream enqueue failed:', msg);
+          }
+          return false;
+        }
+      };
+      const safeClose = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!msg.includes('Controller is already closed')) {
+            console.error('[v1-proxy] response stream close failed:', msg);
+          }
+        }
+      };
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           if (value) {
             sentAny = true;
-            controller.enqueue(value);
+            if (!safeEnqueue(value)) break;
           }
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.error('[v1-proxy] response stream interrupted:', msg);
+        if (!closed) {
+          console.error('[v1-proxy] response stream interrupted:', msg);
+        }
         if (auditId !== null) {
           try {
             updateAuditEntry(auditId, {
@@ -333,7 +362,7 @@ function makeResilientBody(
         }
         if (isStream) {
           const reqId = newapiRequestId();
-          controller.enqueue(
+          safeEnqueue(
             enc.encode(
               `event: error\ndata: ${JSON.stringify({
                 error: {
@@ -344,9 +373,9 @@ function makeResilientBody(
               })}\n\n`,
             ),
           );
-          controller.enqueue(enc.encode('data: [DONE]\n\n'));
+          safeEnqueue(enc.encode('data: [DONE]\n\n'));
         } else if (!sentAny) {
-          controller.enqueue(
+          safeEnqueue(
             enc.encode(
               JSON.stringify({
                 error: {
@@ -362,7 +391,7 @@ function makeResilientBody(
         try {
           reader.releaseLock();
         } catch { }
-        controller.close();
+        safeClose();
       }
     },
     cancel(reason) {
