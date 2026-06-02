@@ -285,6 +285,92 @@ function makeModelRewriter(requestedModel: string): TransformStream<Uint8Array, 
   });
 }
 
+/**
+ * 最后一层流兜底。
+ *
+ * 背景: 上游/NewAPI/MiniMax bridge 偶发提前关 socket 时, undici 会把 upstream.body
+ * 标成 errored。若这个错误继续冒泡给 Next 的 pipeToNodeResponse, Cloudflare 会看到
+ * origin 返回异常流,外层表现成 520。这里把错误转换为客户端可理解的 SSE error + DONE,
+ * 并正常 close,避免把传输错误升级成 Cloudflare 520。
+ */
+function makeResilientBody(
+  source: ReadableStream<Uint8Array>,
+  isStream: boolean,
+  auditId: number | null,
+  requestLogId: number | null,
+  requestedModel: string | null,
+  startTime: number,
+): ReadableStream<Uint8Array> {
+  const enc = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = source.getReader();
+      let sentAny = false;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            sentAny = true;
+            controller.enqueue(value);
+          }
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error('[v1-proxy] response stream interrupted:', msg);
+        if (auditId !== null) {
+          try {
+            updateAuditEntry(auditId, {
+              duration_ms: Date.now() - startTime,
+              response_finish_reason: 'stream_interrupted',
+            });
+          } catch { }
+        }
+        if (requestLogId !== null) {
+          try {
+            updateRequestLogStatus(requestLogId, 502, requestedModel);
+          } catch { }
+        }
+        if (isStream) {
+          const reqId = newapiRequestId();
+          controller.enqueue(
+            enc.encode(
+              `event: error\ndata: ${JSON.stringify({
+                error: {
+                  code: '',
+                  message: `上游响应中断,请稍后重试 (request id: ${reqId})`,
+                  type: 'service_unavailable',
+                },
+              })}\n\n`,
+            ),
+          );
+          controller.enqueue(enc.encode('data: [DONE]\n\n'));
+        } else if (!sentAny) {
+          controller.enqueue(
+            enc.encode(
+              JSON.stringify({
+                error: {
+                  code: '',
+                  message: `上游响应中断,请稍后重试: ${msg}`,
+                  type: 'service_unavailable',
+                },
+              }),
+            ),
+          );
+        }
+      } finally {
+        try {
+          reader.releaseLock();
+        } catch { }
+        controller.close();
+      }
+    },
+    cancel(reason) {
+      console.error('[v1-proxy] client cancelled response stream:', reason);
+    },
+  });
+}
+
 async function handle(req: NextRequest, pathParts: string[]) {
   // 1. 取 sk-key — 同时支持 OpenAI 风格(Authorization: Bearer)和 Anthropic 原生(x-api-key)
   const auth = req.headers.get('authorization') || '';
@@ -609,6 +695,16 @@ async function handle(req: NextRequest, pathParts: string[]) {
     } catch (e) {
       console.error('[v1-proxy] heartbeat pipe failed (non-fatal):', e);
     }
+  }
+  if (body) {
+    body = makeResilientBody(
+      body,
+      isStream,
+      auditId,
+      requestLogId,
+      requestedModel,
+      startTime,
+    );
   }
 
   return new Response(body, {
