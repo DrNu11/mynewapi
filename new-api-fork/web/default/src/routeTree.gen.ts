@@ -10,17 +10,27 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UserAgreementRouteImport } from './routes/user-agreement'
+import { Route as RegisterRouteImport } from './routes/register'
 import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as authRouteRouteImport } from './routes/(auth)/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as PricingIndexRouteImport } from './routes/pricing/index'
+import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
+import { Route as ConsoleUserRouteImport } from './routes/console/user'
 import { Route as ConsoleTopupRouteImport } from './routes/console/topup'
+import { Route as ConsoleTokenRouteImport } from './routes/console/token'
+import { Route as ConsoleSettingRouteImport } from './routes/console/setting'
+import { Route as ConsoleRedemptionRouteImport } from './routes/console/redemption'
+import { Route as ConsolePersonalRouteImport } from './routes/console/personal'
 import { Route as ConsoleLogRouteImport } from './routes/console/log'
+import { Route as ConsoleDeploymentRouteImport } from './routes/console/deployment'
+import { Route as ConsoleChannelRouteImport } from './routes/console/channel'
 import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authenticated/chat2link'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as errors500RouteImport } from './routes/(errors)/500'
@@ -73,9 +83,19 @@ const UserAgreementRoute = UserAgreementRouteImport.update({
   path: '/user-agreement',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
   id: '/privacy-policy',
   path: '/privacy-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
@@ -106,6 +126,11 @@ const PricingIndexRoute = PricingIndexRouteImport.update({
   path: '/pricing/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
+  id: '/console/',
+  path: '/console/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AboutIndexRoute = AboutIndexRouteImport.update({
   id: '/about/',
   path: '/about/',
@@ -116,14 +141,49 @@ const OauthProviderRoute = OauthProviderRouteImport.update({
   path: '/oauth/$provider',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConsoleUserRoute = ConsoleUserRouteImport.update({
+  id: '/console/user',
+  path: '/console/user',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConsoleTopupRoute = ConsoleTopupRouteImport.update({
   id: '/console/topup',
   path: '/console/topup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConsoleTokenRoute = ConsoleTokenRouteImport.update({
+  id: '/console/token',
+  path: '/console/token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConsoleSettingRoute = ConsoleSettingRouteImport.update({
+  id: '/console/setting',
+  path: '/console/setting',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConsoleRedemptionRoute = ConsoleRedemptionRouteImport.update({
+  id: '/console/redemption',
+  path: '/console/redemption',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConsolePersonalRoute = ConsolePersonalRouteImport.update({
+  id: '/console/personal',
+  path: '/console/personal',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConsoleLogRoute = ConsoleLogRouteImport.update({
   id: '/console/log',
   path: '/console/log',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConsoleDeploymentRoute = ConsoleDeploymentRouteImport.update({
+  id: '/console/deployment',
+  path: '/console/deployment',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConsoleChannelRoute = ConsoleChannelRouteImport.update({
+  id: '/console/channel',
+  path: '/console/channel',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedChat2linkRoute = AuthenticatedChat2linkRouteImport.update({
@@ -388,7 +448,9 @@ const AuthenticatedSystemSettingsAuthSectionRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
+  '/register': typeof RegisterRoute
   '/user-agreement': typeof UserAgreementRoute
   '/system-settings': typeof AuthenticatedSystemSettingsRouteRouteWithChildren
   '/forgot-password': typeof authForgotPasswordRoute
@@ -403,10 +465,18 @@ export interface FileRoutesByFullPath {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/console/channel': typeof ConsoleChannelRoute
+  '/console/deployment': typeof ConsoleDeploymentRoute
   '/console/log': typeof ConsoleLogRoute
+  '/console/personal': typeof ConsolePersonalRoute
+  '/console/redemption': typeof ConsoleRedemptionRoute
+  '/console/setting': typeof ConsoleSettingRoute
+  '/console/token': typeof ConsoleTokenRoute
   '/console/topup': typeof ConsoleTopupRoute
+  '/console/user': typeof ConsoleUserRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
+  '/console/': typeof ConsoleIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
@@ -446,7 +516,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
+  '/register': typeof RegisterRoute
   '/user-agreement': typeof UserAgreementRoute
   '/forgot-password': typeof authForgotPasswordRoute
   '/oauth': typeof authOauthRoute
@@ -460,10 +532,18 @@ export interface FileRoutesByTo {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/console/channel': typeof ConsoleChannelRoute
+  '/console/deployment': typeof ConsoleDeploymentRoute
   '/console/log': typeof ConsoleLogRoute
+  '/console/personal': typeof ConsolePersonalRoute
+  '/console/redemption': typeof ConsoleRedemptionRoute
+  '/console/setting': typeof ConsoleSettingRoute
+  '/console/token': typeof ConsoleTokenRoute
   '/console/topup': typeof ConsoleTopupRoute
+  '/console/user': typeof ConsoleUserRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
+  '/console': typeof ConsoleIndexRoute
   '/pricing': typeof PricingIndexRoute
   '/rankings': typeof RankingsIndexRoute
   '/setup': typeof SetupIndexRoute
@@ -506,7 +586,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/(auth)': typeof authRouteRouteWithChildren
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
+  '/login': typeof LoginRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
+  '/register': typeof RegisterRoute
   '/user-agreement': typeof UserAgreementRoute
   '/_authenticated/system-settings': typeof AuthenticatedSystemSettingsRouteRouteWithChildren
   '/(auth)/forgot-password': typeof authForgotPasswordRoute
@@ -521,10 +603,18 @@ export interface FileRoutesById {
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
   '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
+  '/console/channel': typeof ConsoleChannelRoute
+  '/console/deployment': typeof ConsoleDeploymentRoute
   '/console/log': typeof ConsoleLogRoute
+  '/console/personal': typeof ConsolePersonalRoute
+  '/console/redemption': typeof ConsoleRedemptionRoute
+  '/console/setting': typeof ConsoleSettingRoute
+  '/console/token': typeof ConsoleTokenRoute
   '/console/topup': typeof ConsoleTopupRoute
+  '/console/user': typeof ConsoleUserRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
+  '/console/': typeof ConsoleIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
@@ -566,7 +656,9 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/login'
     | '/privacy-policy'
+    | '/register'
     | '/user-agreement'
     | '/system-settings'
     | '/forgot-password'
@@ -581,10 +673,18 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/chat2link'
+    | '/console/channel'
+    | '/console/deployment'
     | '/console/log'
+    | '/console/personal'
+    | '/console/redemption'
+    | '/console/setting'
+    | '/console/token'
     | '/console/topup'
+    | '/console/user'
     | '/oauth/$provider'
     | '/about/'
+    | '/console/'
     | '/pricing/'
     | '/rankings/'
     | '/setup/'
@@ -624,7 +724,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/login'
     | '/privacy-policy'
+    | '/register'
     | '/user-agreement'
     | '/forgot-password'
     | '/oauth'
@@ -638,10 +740,18 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/chat2link'
+    | '/console/channel'
+    | '/console/deployment'
     | '/console/log'
+    | '/console/personal'
+    | '/console/redemption'
+    | '/console/setting'
+    | '/console/token'
     | '/console/topup'
+    | '/console/user'
     | '/oauth/$provider'
     | '/about'
+    | '/console'
     | '/pricing'
     | '/rankings'
     | '/setup'
@@ -683,7 +793,9 @@ export interface FileRouteTypes {
     | '/'
     | '/(auth)'
     | '/_authenticated'
+    | '/login'
     | '/privacy-policy'
+    | '/register'
     | '/user-agreement'
     | '/_authenticated/system-settings'
     | '/(auth)/forgot-password'
@@ -698,10 +810,18 @@ export interface FileRouteTypes {
     | '/(errors)/500'
     | '/(errors)/503'
     | '/_authenticated/chat2link'
+    | '/console/channel'
+    | '/console/deployment'
     | '/console/log'
+    | '/console/personal'
+    | '/console/redemption'
+    | '/console/setting'
+    | '/console/token'
     | '/console/topup'
+    | '/console/user'
     | '/oauth/$provider'
     | '/about/'
+    | '/console/'
     | '/pricing/'
     | '/rankings/'
     | '/setup/'
@@ -744,17 +864,27 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   authRouteRoute: typeof authRouteRouteWithChildren
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
+  LoginRoute: typeof LoginRoute
   PrivacyPolicyRoute: typeof PrivacyPolicyRoute
+  RegisterRoute: typeof RegisterRoute
   UserAgreementRoute: typeof UserAgreementRoute
   errors401Route: typeof errors401Route
   errors403Route: typeof errors403Route
   errors404Route: typeof errors404Route
   errors500Route: typeof errors500Route
   errors503Route: typeof errors503Route
+  ConsoleChannelRoute: typeof ConsoleChannelRoute
+  ConsoleDeploymentRoute: typeof ConsoleDeploymentRoute
   ConsoleLogRoute: typeof ConsoleLogRoute
+  ConsolePersonalRoute: typeof ConsolePersonalRoute
+  ConsoleRedemptionRoute: typeof ConsoleRedemptionRoute
+  ConsoleSettingRoute: typeof ConsoleSettingRoute
+  ConsoleTokenRoute: typeof ConsoleTokenRoute
   ConsoleTopupRoute: typeof ConsoleTopupRoute
+  ConsoleUserRoute: typeof ConsoleUserRoute
   OauthProviderRoute: typeof OauthProviderRoute
   AboutIndexRoute: typeof AboutIndexRoute
+  ConsoleIndexRoute: typeof ConsoleIndexRoute
   PricingIndexRoute: typeof PricingIndexRoute
   RankingsIndexRoute: typeof RankingsIndexRoute
   SetupIndexRoute: typeof SetupIndexRoute
@@ -770,11 +900,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UserAgreementRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/privacy-policy': {
       id: '/privacy-policy'
       path: '/privacy-policy'
       fullPath: '/privacy-policy'
       preLoaderRoute: typeof PrivacyPolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated': {
@@ -819,6 +963,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PricingIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/console/': {
+      id: '/console/'
+      path: '/console'
+      fullPath: '/console/'
+      preLoaderRoute: typeof ConsoleIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/about/': {
       id: '/about/'
       path: '/about'
@@ -833,6 +984,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OauthProviderRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/console/user': {
+      id: '/console/user'
+      path: '/console/user'
+      fullPath: '/console/user'
+      preLoaderRoute: typeof ConsoleUserRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/console/topup': {
       id: '/console/topup'
       path: '/console/topup'
@@ -840,11 +998,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleTopupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/console/token': {
+      id: '/console/token'
+      path: '/console/token'
+      fullPath: '/console/token'
+      preLoaderRoute: typeof ConsoleTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/console/setting': {
+      id: '/console/setting'
+      path: '/console/setting'
+      fullPath: '/console/setting'
+      preLoaderRoute: typeof ConsoleSettingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/console/redemption': {
+      id: '/console/redemption'
+      path: '/console/redemption'
+      fullPath: '/console/redemption'
+      preLoaderRoute: typeof ConsoleRedemptionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/console/personal': {
+      id: '/console/personal'
+      path: '/console/personal'
+      fullPath: '/console/personal'
+      preLoaderRoute: typeof ConsolePersonalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/console/log': {
       id: '/console/log'
       path: '/console/log'
       fullPath: '/console/log'
       preLoaderRoute: typeof ConsoleLogRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/console/deployment': {
+      id: '/console/deployment'
+      path: '/console/deployment'
+      fullPath: '/console/deployment'
+      preLoaderRoute: typeof ConsoleDeploymentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/console/channel': {
+      id: '/console/channel'
+      path: '/console/channel'
+      fullPath: '/console/channel'
+      preLoaderRoute: typeof ConsoleChannelRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/chat2link': {
@@ -1304,17 +1504,27 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   authRouteRoute: authRouteRouteWithChildren,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
+  LoginRoute: LoginRoute,
   PrivacyPolicyRoute: PrivacyPolicyRoute,
+  RegisterRoute: RegisterRoute,
   UserAgreementRoute: UserAgreementRoute,
   errors401Route: errors401Route,
   errors403Route: errors403Route,
   errors404Route: errors404Route,
   errors500Route: errors500Route,
   errors503Route: errors503Route,
+  ConsoleChannelRoute: ConsoleChannelRoute,
+  ConsoleDeploymentRoute: ConsoleDeploymentRoute,
   ConsoleLogRoute: ConsoleLogRoute,
+  ConsolePersonalRoute: ConsolePersonalRoute,
+  ConsoleRedemptionRoute: ConsoleRedemptionRoute,
+  ConsoleSettingRoute: ConsoleSettingRoute,
+  ConsoleTokenRoute: ConsoleTokenRoute,
   ConsoleTopupRoute: ConsoleTopupRoute,
+  ConsoleUserRoute: ConsoleUserRoute,
   OauthProviderRoute: OauthProviderRoute,
   AboutIndexRoute: AboutIndexRoute,
+  ConsoleIndexRoute: ConsoleIndexRoute,
   PricingIndexRoute: PricingIndexRoute,
   RankingsIndexRoute: RankingsIndexRoute,
   SetupIndexRoute: SetupIndexRoute,

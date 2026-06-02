@@ -47,10 +47,24 @@ func ThemeAwarePath(suffix string) string {
 		return suffix
 	}
 	switch {
+	case suffix == "/console" || suffix == "/console/":
+		return "/dashboard"
+	case strings.HasPrefix(suffix, "/console/channel"):
+		return strings.Replace(suffix, "/console/channel", "/channels", 1)
+	case strings.HasPrefix(suffix, "/console/deployment"):
+		return strings.Replace(suffix, "/console/deployment", "/models/deployments", 1)
 	case strings.HasPrefix(suffix, "/console/topup"):
 		return strings.Replace(suffix, "/console/topup", "/wallet", 1)
 	case strings.HasPrefix(suffix, "/console/log"):
 		return strings.Replace(suffix, "/console/log", "/usage-logs", 1)
+	case strings.HasPrefix(suffix, "/console/token"):
+		return strings.Replace(suffix, "/console/token", "/keys", 1)
+	case strings.HasPrefix(suffix, "/console/redemption"):
+		return strings.Replace(suffix, "/console/redemption", "/redemption-codes", 1)
+	case strings.HasPrefix(suffix, "/console/user"):
+		return strings.Replace(suffix, "/console/user", "/users", 1)
+	case strings.HasPrefix(suffix, "/console/setting"):
+		return strings.Replace(suffix, "/console/setting", "/system-settings", 1)
 	case strings.HasPrefix(suffix, "/console/personal"):
 		return strings.Replace(suffix, "/console/personal", "/profile", 1)
 	}
