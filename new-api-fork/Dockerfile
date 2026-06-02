@@ -43,16 +43,16 @@ RUN set -eux; \
       for file in "$assets"/*.js; do \
         [ -f "$file" ] || continue; \
         base="${file##*/}"; \
-        case "$base" in *-v56.js) continue ;; esac; \
-        cp "$file" "$assets/${base%.js}-v56.js"; \
+        case "$base" in *-v57.js) continue ;; esac; \
+        cp "$file" "$assets/${base%.js}-v57.js"; \
       done; \
       for file in "$assets"/*.js; do \
         [ -f "$file" ] || continue; \
         base="${file##*/}"; \
-        case "$base" in *-v56.js) continue ;; esac; \
-        new_base="${base%.js}-v56.js"; \
+        case "$base" in *-v57.js) continue ;; esac; \
+        new_base="${base%.js}-v57.js"; \
         sed -i "s#${base}#${new_base}#g" "$html"; \
-        find "$assets" -type f -name '*-v56.js' -exec sed -i "s#${base}#${new_base}#g" {} +; \
+        find "$assets" -type f -name '*-v57.js' -exec sed -i "s#${base}#${new_base}#g" {} +; \
       done; \
     done
 RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
