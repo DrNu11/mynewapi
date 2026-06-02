@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import codecs
 import json
 import os
@@ -27,8 +28,11 @@ PROVIDER_MODEL_MAP_JSON = os.getenv(
 )
 MAX_IMAGES = int(os.getenv("VISION_BRIDGE_MAX_IMAGES", "4"))
 IMAGE_MAX_BYTES = int(os.getenv("VISION_BRIDGE_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
+PROVIDER_UPSTREAM_MAX_ATTEMPTS = int(os.getenv("PROVIDER_UPSTREAM_MAX_ATTEMPTS", "3"))
+PROVIDER_RETRY_BASE_DELAY_SECONDS = float(os.getenv("PROVIDER_RETRY_BASE_DELAY_SECONDS", "0.6"))
 
 IDENTITY_TAIL_CHARS = 64
+PROVIDER_RETRY_STATUSES = {500, 502, 503, 504}
 
 HOP_BY_HOP = {
     "connection",
@@ -434,37 +438,93 @@ async def _proxy(request: Request, path: str) -> Response:
 
     headers = _forward_headers(request, len(body) if body else 0)
     client = httpx.AsyncClient(timeout=None, follow_redirects=False)
-    req = client.build_request(request.method, upstream_url, headers=headers, content=body)
-    try:
-        upstream = await client.send(req, stream=True)
-    except Exception as exc:
+    max_attempts = PROVIDER_UPSTREAM_MAX_ATTEMPTS if BRIDGE_MODE == "provider" else 1
+    max_attempts = max(1, max_attempts)
+    upstream: httpx.Response | None = None
+    for attempt in range(1, max_attempts + 1):
+        req = client.build_request(request.method, upstream_url, headers=headers, content=body)
+        try:
+            upstream = await client.send(req, stream=True)
+        except Exception as exc:
+            if attempt >= max_attempts:
+                await client.aclose()
+                return _json_error(502, f"上游服务无法访问: {exc}", "service_unavailable")
+            print(f"[provider-retry] upstream exception attempt={attempt}: {exc}", flush=True)
+            await asyncio.sleep(PROVIDER_RETRY_BASE_DELAY_SECONDS * attempt)
+            continue
+
+        should_retry = (
+            BRIDGE_MODE == "provider"
+            and request.method.upper() == "POST"
+            and endpoint in {"/v1/chat/completions", "/v1/responses"}
+            and upstream.status_code in PROVIDER_RETRY_STATUSES
+            and attempt < max_attempts
+        )
+        if not should_retry:
+            break
+        print(
+            f"[provider-retry] upstream status={upstream.status_code} attempt={attempt} endpoint={endpoint}",
+            flush=True,
+        )
+        await upstream.aclose()
+        await asyncio.sleep(PROVIDER_RETRY_BASE_DELAY_SECONDS * attempt)
+
+    if upstream is None:
         await client.aclose()
-        return _json_error(502, f"上游服务无法访问: {exc}", "service_unavailable")
+        return _json_error(502, "上游服务无法访问", "service_unavailable")
 
     async def body_iter():
         decoder = codecs.getincrementaldecoder("utf-8")()
         pending_text = ""
+        sent_done = False
+        is_event_stream = "event-stream" in (upstream.headers.get("content-type") or "").lower()
         try:
-            async for chunk in upstream.aiter_bytes():
-                if BRIDGE_MODE != "provider" or not _is_deepseek_model(origin_model):
-                    yield chunk
-                    continue
-                try:
-                    pending_text += decoder.decode(chunk)
-                except UnicodeDecodeError:
-                    if pending_text:
-                        yield _mask_provider_identity_text(pending_text, origin_model).encode("utf-8")
-                        pending_text = ""
-                    yield chunk
-                    continue
-                if len(pending_text) <= IDENTITY_TAIL_CHARS:
-                    continue
-                safe_text = pending_text[:-IDENTITY_TAIL_CHARS]
-                pending_text = pending_text[-IDENTITY_TAIL_CHARS:]
-                yield _mask_provider_identity_text(safe_text, origin_model).encode("utf-8")
+            try:
+                async for chunk in upstream.aiter_bytes():
+                    if BRIDGE_MODE != "provider" or not _is_deepseek_model(origin_model):
+                        yield chunk
+                        continue
+                    try:
+                        pending_text += decoder.decode(chunk)
+                    except UnicodeDecodeError:
+                        if pending_text:
+                            yield _mask_provider_identity_text(pending_text, origin_model).encode("utf-8")
+                            pending_text = ""
+                        yield chunk
+                        continue
+
+                    if is_event_stream:
+                        while "\n\n" in pending_text:
+                            frame, pending_text = pending_text.split("\n\n", 1)
+                            if "[DONE]" in frame:
+                                sent_done = True
+                            yield _mask_provider_identity_text(frame + "\n\n", origin_model).encode("utf-8")
+                        continue
+
+                    if len(pending_text) <= IDENTITY_TAIL_CHARS:
+                        continue
+                    safe_text = pending_text[:-IDENTITY_TAIL_CHARS]
+                    pending_text = pending_text[-IDENTITY_TAIL_CHARS:]
+                    yield _mask_provider_identity_text(safe_text, origin_model).encode("utf-8")
+            except Exception as exc:
+                print(f"[provider-stream] upstream stream interrupted: {exc}", flush=True)
+
             if BRIDGE_MODE == "provider" and _is_deepseek_model(origin_model):
                 pending_text += decoder.decode(b"", final=True)
-                if pending_text:
+                if is_event_stream:
+                    while "\n\n" in pending_text:
+                        frame, pending_text = pending_text.split("\n\n", 1)
+                        if "[DONE]" in frame:
+                            sent_done = True
+                        yield _mask_provider_identity_text(frame + "\n\n", origin_model).encode("utf-8")
+                    if pending_text.strip():
+                        print(
+                            f"[provider-stream] dropped incomplete SSE tail bytes={len(pending_text.encode('utf-8', errors='ignore'))}",
+                            flush=True,
+                        )
+                    if not sent_done:
+                        yield b"data: [DONE]\n\n"
+                elif pending_text:
                     yield _mask_provider_identity_text(pending_text, origin_model).encode("utf-8")
         finally:
             await upstream.aclose()
