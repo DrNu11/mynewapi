@@ -21,10 +21,13 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 import config
+import email_alerts
 import system_metrics
 import gateway_metrics
 import history_store
+import gpt_monitor
 import minimax_monitor
+import minimax_admin
 import mock_data
 import throttle_admin
 
@@ -102,6 +105,33 @@ def _build_payload() -> list[dict]:
     return out
 
 
+def _build_minimax_payload(force: bool = False) -> dict:
+    payload = minimax_monitor.collect(force=force)
+    if not config.MOCK_MODE:
+        try:
+            plans = {item["tag"]: item for item in minimax_admin.get_plan_statuses()}
+            for account in payload.get("accounts") or []:
+                account["channel_control"] = plans.get(account.get("tag"))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("minimax plan status attach failed: %s", e)
+    return payload
+
+
+def _build_gpt_payload(force: bool = False) -> dict:
+    return gpt_monitor.collect(force=force)
+
+
+def _run_minimax_auto_guard() -> None:
+    try:
+        payload = _build_minimax_payload(force=True)
+        result = minimax_admin.auto_guard(payload)
+        actions = result.get("actions") or []
+        if actions:
+            logger.warning("MiniMax auto guard actions: %s", actions)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("MiniMax auto guard failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler = None
@@ -133,8 +163,28 @@ async def lifespan(app: FastAPI):
             max_instances=1,
             coalesce=True,
         )
+        scheduler.add_job(
+            lambda: email_alerts.evaluate_and_send(_build_payload()),
+            "interval",
+            seconds=config.ALERT_INTERVAL_SECONDS,
+            id="email_alerts",
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            _run_minimax_auto_guard,
+            "interval",
+            seconds=config.ALERT_INTERVAL_SECONDS,
+            id="minimax_auto_guard",
+            max_instances=1,
+            coalesce=True,
+        )
         scheduler.start()
-        logger.info("scheduler started: refresh every %ds", config.REFRESH_SECONDS)
+        logger.info(
+            "scheduler started: refresh every %ds, alerts every %ds",
+            config.REFRESH_SECONDS,
+            config.ALERT_INTERVAL_SECONDS,
+        )
     else:
         logger.info("running in MOCK_MODE, no scheduler, no DB/docker connection")
 
@@ -162,12 +212,77 @@ def get_health() -> dict:
         "mock_mode": config.MOCK_MODE,
         "uptime_seconds": int(time.time() - _started_at),
         "gateways": [g["tag"] for g in config.get_gateways()],
+        "email_alerts_enabled": email_alerts.enabled(),
     }
+
+
+@app.post("/api/admin/test-email")
+def test_email(payload: dict) -> JSONResponse:
+    secret = payload.get("secret") or ""
+    if secret != ADMIN_SECRET:
+        return JSONResponse(content={"ok": False, "error": "密码错误"}, status_code=401)
+    try:
+        email_alerts.send_test_email()
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(content={"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse(content={"ok": True})
 
 
 @app.get("/api/minimax")
 def get_minimax() -> JSONResponse:
-    return JSONResponse(content=minimax_monitor.collect())
+    return JSONResponse(content=_build_minimax_payload())
+
+
+@app.get("/api/gpt")
+def get_gpt() -> JSONResponse:
+    return JSONResponse(content=_build_gpt_payload())
+
+
+@app.get("/api/admin/minimax-channels")
+def get_minimax_channels() -> JSONResponse:
+    if config.MOCK_MODE:
+        return JSONResponse(
+            content={
+                "configured": True,
+                "enabled": True,
+                "enabled_count": 3,
+                "total": 3,
+                "channels": [],
+                "mock": True,
+            }
+        )
+    return JSONResponse(content=minimax_admin.get_status())
+
+
+@app.post("/api/admin/minimax-channels")
+def toggle_minimax_channels(payload: dict) -> JSONResponse:
+    secret = payload.get("secret") or ""
+    if secret != ADMIN_SECRET:
+        return JSONResponse(content={"ok": False, "error": "密码错误"}, status_code=401)
+    if config.MOCK_MODE:
+        return JSONResponse(content={"ok": True, "mock": True})
+    target = bool(payload.get("enabled"))
+    try:
+        result = minimax_admin.set_enabled(target)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(content={"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse(content=result, status_code=200 if result.get("ok") else 500)
+
+
+@app.post("/api/admin/minimax-plan")
+def toggle_minimax_plan(payload: dict) -> JSONResponse:
+    secret = payload.get("secret") or ""
+    if secret != ADMIN_SECRET:
+        return JSONResponse(content={"ok": False, "error": "密码错误"}, status_code=401)
+    if config.MOCK_MODE:
+        return JSONResponse(content={"ok": True, "mock": True})
+    tag = str(payload.get("tag") or "").strip()
+    target = bool(payload.get("enabled"))
+    try:
+        result = minimax_admin.set_plan_enabled(tag, target, manual=True)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(content={"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse(content=result, status_code=200 if result.get("ok") else 500)
 
 
 # ==========================================

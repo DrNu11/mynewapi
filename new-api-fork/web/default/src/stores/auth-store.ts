@@ -64,12 +64,17 @@ export const useAuthStore = create<AuthState>()((set) => {
     try {
       if (typeof window !== 'undefined') {
         const saved = window.localStorage.getItem('user')
-        return saved ? JSON.parse(saved) : null
+        const user = saved ? JSON.parse(saved) : null
+        if (user?.id && !window.localStorage.getItem('uid')) {
+          window.localStorage.setItem('uid', String(user.id))
+        }
+        return user
       }
     } catch {
       // Clear dirty data when parsing fails
       if (typeof window !== 'undefined') {
         window.localStorage.removeItem('user')
+        window.localStorage.removeItem('uid')
       }
     }
     return null
@@ -84,8 +89,12 @@ export const useAuthStore = create<AuthState>()((set) => {
           if (typeof window !== 'undefined') {
             if (user) {
               window.localStorage.setItem('user', JSON.stringify(user))
+              if (user.id) {
+                window.localStorage.setItem('uid', String(user.id))
+              }
             } else {
               window.localStorage.removeItem('user')
+              window.localStorage.removeItem('uid')
             }
           }
           return { ...state, auth: { ...state.auth, user } }
@@ -94,6 +103,7 @@ export const useAuthStore = create<AuthState>()((set) => {
         set((state) => {
           if (typeof window !== 'undefined') {
             window.localStorage.removeItem('user')
+            window.localStorage.removeItem('uid')
           }
           return {
             ...state,

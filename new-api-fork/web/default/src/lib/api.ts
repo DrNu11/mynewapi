@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
@@ -36,6 +36,10 @@ export const api = axios.create({
     'Cache-Control': 'no-store', // Prevent caching
   },
 })
+
+const silentErrorConfig = {
+  skipErrorHandler: true,
+} as unknown as AxiosRequestConfig
 
 // ============================================================================
 // Request Deduplication
@@ -124,7 +128,18 @@ api.interceptors.response.use(
 function getUserId(): string | null {
   try {
     if (typeof window !== 'undefined') {
-      return window.localStorage.getItem('uid')
+      const uid = window.localStorage.getItem('uid')
+      if (uid) return uid
+
+      const savedUser = window.localStorage.getItem('user')
+      if (!savedUser) return null
+
+      const user = JSON.parse(savedUser) as { id?: unknown } | null
+      if (user?.id === undefined || user.id === null) return null
+
+      const recoveredUid = String(user.id)
+      window.localStorage.setItem('uid', recoveredUid)
+      return recoveredUid
     }
   } catch {
     /* empty */
@@ -205,7 +220,7 @@ export async function getUserGroups(): Promise<{
 
 // Get system status
 export async function getStatus() {
-  const res = await api.get('/api/status')
+  const res = await api.get('/api/status', silentErrorConfig)
   return res.data?.data as Record<string, unknown>
 }
 
@@ -215,7 +230,38 @@ export async function getNotice(): Promise<{
   message?: string
   data?: string
 }> {
-  const res = await api.get('/api/notice')
+  const res = await api.get('/api/notice', silentErrorConfig)
+  return res.data
+}
+
+export interface UserWarning {
+  id: number
+  user_id: number
+  source?: string
+  source_key?: string
+  level?: string
+  title: string
+  message: string
+  created_at?: number
+  updated_at?: number
+  expires_at?: number
+  acknowledged_at?: number
+}
+
+export async function getUserWarnings(): Promise<{
+  success: boolean
+  message?: string
+  data?: UserWarning[]
+}> {
+  const res = await api.get('/api/user/warnings')
+  return res.data
+}
+
+export async function acknowledgeUserWarning(id: number): Promise<{
+  success: boolean
+  message?: string
+}> {
+  const res = await api.post(`/api/user/warnings/${id}/ack`)
   return res.data
 }
 

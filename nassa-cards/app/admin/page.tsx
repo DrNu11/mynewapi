@@ -18,6 +18,7 @@ import {
   Ban,
   Power,
   FolderTree,
+  UserRound,
 } from 'lucide-react';
 
 interface CardRow {
@@ -33,6 +34,8 @@ interface CardRow {
   activated_at: number | null;
   expires_at: number | null;
   newapi_token_key: string | null;
+  newapi_user_id: number | null;
+  disable_reason: string | null;
   notes: string | null;
   pool: string | null;
 }
@@ -61,7 +64,9 @@ export default function AdminDashboard() {
   const [genCount, setGenCount] = useState(1);
   const [genNotes, setGenNotes] = useState('');
   const [genPool, setGenPool] = useState('');
+  const [genNewApiUserId, setGenNewApiUserId] = useState('');
   const [poolEditingId, setPoolEditingId] = useState<number | null>(null);
+  const [userEditingId, setUserEditingId] = useState<number | null>(null);
   /**
    * 自定义天数: 存原始 input 字符串(避免 React 受控 input 在 0/小数开头时被清空)。
    * 留空 → 走 genPlan 套餐；填数字(>= MIN_CUSTOM_DAYS) → 覆盖套餐天数。
@@ -121,6 +126,7 @@ export default function AdminDashboard() {
           count: genCount,
           notes: genNotes,
           pool: genPool.trim() || undefined,
+          newapi_user_id: genNewApiUserId.trim() || undefined,
           // custom_days > 0 时后端用它覆盖 plan 的 days
           custom_days: customDaysActive ? customDaysNum : undefined,
         }),
@@ -129,6 +135,7 @@ export default function AdminDashboard() {
       if (body.success) {
         setNewCodes(body.data.codes);
         setGenNotes('');
+        setGenNewApiUserId('');
         await load();
       } else {
         alert('生成失败: ' + body.message);
@@ -219,6 +226,43 @@ export default function AdminDashboard() {
     }
   }
 
+  async function setNewApiUser(card: CardRow) {
+    const current = card.newapi_user_id ? String(card.newapi_user_id) : '';
+    const suffix = card.newapi_token_key
+      ? '\n\n注意:这张卡已经激活,这里只更新后台标注,不会迁移 NewAPI 既有 token 和历史日志。'
+      : '\n\n未激活卡设置后,客户激活时 token 会创建到该 NewAPI 用户名下。';
+    const next = window.prompt(
+      `修改卡密 ${card.code} 的 NewAPI 用户 ID\n(留空 = 使用默认管理员归属)${suffix}`,
+      current
+    );
+    if (next === null) return;
+    const v = next.trim();
+    if (v === current) return;
+    if (v && (!/^\d+$/.test(v) || Number(v) <= 0)) {
+      alert('NewAPI 用户 ID 必须是正整数');
+      return;
+    }
+    setUserEditingId(card.id);
+    try {
+      const res = await fetch(`/api/admin/cards/${encodeURIComponent(card.code)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_newapi_user_id', newapi_user_id: v || null }),
+      });
+      const body = await res.json();
+      if (!body.success) {
+        alert(`修改 NewAPI 用户失败: ${body.message}`);
+      } else {
+        if (body.data?.warning) alert(body.data.warning);
+        await load();
+      }
+    } catch (e: any) {
+      alert(`修改 NewAPI 用户失败: ${e?.message || e}`);
+    } finally {
+      setUserEditingId(null);
+    }
+  }
+
   async function toggleCard(card: CardRow) {
     const action = card.status === 'disabled' ? 'enable' : 'disable';
     const verb = action === 'disable' ? '禁用' : '取消禁用';
@@ -231,13 +275,27 @@ export default function AdminDashboard() {
         : hasToken
           ? '恢复 NewAPI token, 客户 sk-key 重新可用。'
           : '这张卡密尚未激活,取消禁用后恢复为未使用,客户可以继续激活。';
-    if (!confirm(`确定${verb}卡密 ${card.code}?\n\n${detail}`)) return;
+    let disableReason = '';
+    if (action === 'disable') {
+      const next = window.prompt(
+        `确定禁用卡密 ${card.code}?\n\n${detail}\n\n请输入客户请求时看到的禁用理由:`,
+        card.disable_reason || '该卡密因异常并发/滥用已被暂停使用,请联系客服处理。'
+      );
+      if (next === null) return;
+      disableReason = next.trim();
+      if (!disableReason) {
+        alert('禁用理由不能为空');
+        return;
+      }
+    } else if (!confirm(`确定${verb}卡密 ${card.code}?\n\n${detail}`)) {
+      return;
+    }
     setTogglingId(card.id);
     try {
       const res = await fetch(`/api/admin/cards/${encodeURIComponent(card.code)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, disable_reason: disableReason || undefined }),
       });
       const body = await res.json();
       if (!body.success) {
@@ -294,7 +352,7 @@ export default function AdminDashboard() {
             <Plus className="h-4 w-4 text-brand-400" />
             批量生成卡密
           </h2>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-6">
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-7">
             <div>
               <label className="text-xs text-slate-400">分类</label>
               <select
@@ -348,6 +406,21 @@ export default function AdminDashboard() {
                 value={genCount}
                 onChange={(e) => setGenCount(parseInt(e.target.value) || 0)}
                 className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-brand-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400" title="填写客户在 NewAPI 后台的用户 ID;激活时 token 会创建到该用户名下">
+                <UserRound className="mr-1 inline h-3 w-3" />
+                NewAPI 用户ID(可选)
+              </label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={genNewApiUserId}
+                onChange={(e) => setGenNewApiUserId(e.target.value)}
+                placeholder="例如:444"
+                className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-brand-500 focus:outline-none"
               />
             </div>
             <div>
@@ -491,6 +564,7 @@ export default function AdminDashboard() {
                   <th className="px-3 py-2.5 font-medium">卡密</th>
                   <th className="px-3 py-2.5 font-medium">分类</th>
                   <th className="px-3 py-2.5 font-medium" title="商家内部号池标签">号池</th>
+                  <th className="px-3 py-2.5 font-medium" title="激活时 token 归属的 NewAPI 用户">NewAPI用户</th>
                   <th className="px-3 py-2.5 font-medium">套餐</th>
                   <th className="px-3 py-2.5 font-medium">状态</th>
                   <th className="px-3 py-2.5 font-medium">创建时间</th>
@@ -504,7 +578,7 @@ export default function AdminDashboard() {
               <tbody>
                 {cards.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={11} className="px-3 py-12 text-center text-sm text-slate-500">
+                    <td colSpan={12} className="px-3 py-12 text-center text-sm text-slate-500">
                       暂无数据
                     </td>
                   </tr>
@@ -520,6 +594,15 @@ export default function AdminDashboard() {
                         </span>
                       ) : (
                         <span className="text-xs text-slate-600">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {c.newapi_user_id ? (
+                        <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 font-mono text-xs text-sky-200">
+                          {c.newapi_user_id}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-600">默认</span>
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-slate-300">{formatDaysCN(c.plan_days)}</td>
@@ -569,6 +652,19 @@ export default function AdminDashboard() {
                             <FolderTree className="h-3 w-3" />
                           )}
                           号池
+                        </button>
+                        <button
+                          onClick={() => setNewApiUser(c)}
+                          disabled={userEditingId === c.id}
+                          title="设置 token 归属的 NewAPI 用户 ID"
+                          className="flex items-center gap-1 rounded border border-sky-500/40 px-2 py-1 text-xs text-sky-300 hover:bg-sky-500/10 disabled:opacity-50"
+                        >
+                          {userEditingId === c.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <UserRound className="h-3 w-3" />
+                          )}
+                          用户
                         </button>
                         {c.newapi_token_key && (
                           <button

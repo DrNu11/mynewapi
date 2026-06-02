@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
-import { Bell, Megaphone } from 'lucide-react'
+import { Bell, Megaphone, ShieldAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getAnnouncementColorClass } from '@/lib/colors'
 import { formatDateTimeObject } from '@/lib/time'
@@ -42,15 +42,25 @@ interface AnnouncementItem {
   publishDate?: string | Date
 }
 
+interface UserWarningItem {
+  id: number
+  title?: string
+  message?: string
+  level?: string
+  created_at?: number
+}
+
 interface NotificationDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  activeTab: 'notice' | 'announcements'
-  onTabChange: (tab: 'notice' | 'announcements') => void
+  activeTab: 'notice' | 'announcements' | 'warnings'
+  onTabChange: (tab: 'notice' | 'announcements' | 'warnings') => void
   notice: string
   announcements: AnnouncementItem[]
+  userWarnings: UserWarningItem[]
   loading: boolean
   onCloseToday: () => void
+  onAcknowledgeWarning: (id: number) => void | Promise<void>
 }
 
 /**
@@ -229,6 +239,71 @@ function AnnouncementsContent({
   )
 }
 
+function WarningsContent({
+  warnings,
+  loading,
+  t,
+  onAcknowledgeWarning,
+}: {
+  warnings: UserWarningItem[]
+  loading: boolean
+  t: TFunction
+  onAcknowledgeWarning: (id: number) => void | Promise<void>
+}) {
+  if (loading) {
+    return <EmptyState message={t('Loading...')} />
+  }
+
+  if (warnings.length === 0) {
+    return <EmptyState message={t('No security warnings')} />
+  }
+
+  return (
+    <ScrollArea className='h-[50vh] pr-4'>
+      <div className='space-y-3'>
+        {warnings.map((warning) => {
+          const createdAt = warning.created_at
+            ? new Date(warning.created_at * 1000)
+            : null
+
+          return (
+            <div
+              key={warning.id}
+              className='border-border bg-muted/30 rounded-lg border p-4'
+            >
+              <div className='flex items-start gap-3'>
+                <ShieldAlert className='text-destructive mt-0.5 h-5 w-5 shrink-0' />
+                <div className='min-w-0 flex-1 space-y-2'>
+                  <div className='font-medium'>
+                    {warning.title || t('Security warning')}
+                  </div>
+                  <div className='text-muted-foreground text-sm'>
+                    <Markdown>{warning.message || ''}</Markdown>
+                  </div>
+                  {createdAt && (
+                    <div className='text-muted-foreground text-xs'>
+                      {formatDateTimeObject(createdAt)}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className='mt-3 flex justify-end'>
+                <Button
+                  size='sm'
+                  variant='outline'
+                  onClick={() => onAcknowledgeWarning(warning.id)}
+                >
+                  {t('I understand')}
+                </Button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </ScrollArea>
+  )
+}
+
 /**
  * Notification dialog with Notice and Announcements tabs
  */
@@ -239,8 +314,10 @@ export function NotificationDialog({
   onTabChange,
   notice,
   announcements,
+  userWarnings,
   loading,
   onCloseToday,
+  onAcknowledgeWarning,
 }: NotificationDialogProps) {
   const { t } = useTranslation()
   return (
@@ -254,7 +331,7 @@ export function NotificationDialog({
           value={activeTab}
           onValueChange={onTabChange as (value: string) => void}
         >
-          <TabsList className='grid w-full grid-cols-2'>
+          <TabsList className='grid w-full grid-cols-3'>
             <TabsTrigger value='notice' className='gap-1.5'>
               <Bell className='h-3.5 w-3.5' />
               {t('Notice')}
@@ -262,6 +339,10 @@ export function NotificationDialog({
             <TabsTrigger value='announcements' className='gap-1.5'>
               <Megaphone className='h-3.5 w-3.5' />
               {t('Timeline')}
+            </TabsTrigger>
+            <TabsTrigger value='warnings' className='gap-1.5'>
+              <ShieldAlert className='h-3.5 w-3.5' />
+              {t('Security')}
             </TabsTrigger>
           </TabsList>
 
@@ -274,6 +355,15 @@ export function NotificationDialog({
               announcements={announcements}
               loading={loading}
               t={t}
+            />
+          </TabsContent>
+
+          <TabsContent value='warnings' className='mt-4'>
+            <WarningsContent
+              warnings={userWarnings}
+              loading={loading}
+              t={t}
+              onAcknowledgeWarning={onAcknowledgeWarning}
             />
           </TabsContent>
         </Tabs>

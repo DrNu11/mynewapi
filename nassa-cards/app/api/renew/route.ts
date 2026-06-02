@@ -11,6 +11,7 @@ import {
 } from '@/lib/db';
 import { isValidCodeFormat, normalizeCode } from '@/lib/codes';
 import {
+  addTokenQuotaUSD,
   getTokenById,
   updateTokenExpiredTime,
 } from '@/lib/newapi';
@@ -24,6 +25,13 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const GPT_WEEKLY_QUOTA_USD = 1000;
+
+function renewalQuotaUSD(category: Category | null, plan: string): number | null {
+  if (category === 'gpt' && plan === '7d') return GPT_WEEKLY_QUOTA_USD;
+  return null;
+}
 
 function clientIp(req: NextRequest): string {
   const xff = req.headers.get('x-forwarded-for');
@@ -159,9 +167,11 @@ export async function POST(req: NextRequest) {
   // ===================== 调 NewAPI 改 token expired_time =====================
   let beforeExp: number;
   let afterExp: number;
+  let quotaAdded = false;
+  const addQuotaUSD = renewalQuotaUSD(renewalCat, renewal.plan);
   try {
     // 先 GET token 验证它仍存在 + 拿当前 server 端 expired_time
-    const live = await getTokenById(orig.newapi_token_id);
+    const live = await getTokenById(orig.newapi_token_id, orig.newapi_user_id);
     if (live.expired_time === -1) {
       // server 端是 noExpire,客户端 cards 也应该是 NULL
       releaseCardClaim(renewalCode);
@@ -181,9 +191,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const r = await updateTokenExpiredTime(orig.newapi_token_id, plan.newExpire);
+    const r = await updateTokenExpiredTime(orig.newapi_token_id, plan.newExpire, orig.newapi_user_id);
     beforeExp = r.before;
     afterExp = r.after;
+    if (addQuotaUSD) {
+      await addTokenQuotaUSD(orig.newapi_token_id, addQuotaUSD, orig.newapi_user_id);
+      quotaAdded = true;
+    }
   } catch (e) {
     console.error('[renew] NewAPI 调用失败', e);
     releaseCardClaim(renewalCode);
@@ -211,6 +225,7 @@ export async function POST(req: NextRequest) {
       addedDays: renewal.plan_days,
       newapiTokenId: orig.newapi_token_id,
       newapiTokenKey: orig.newapi_token_key,
+      newapiUserId: orig.newapi_user_id,
       renewalIp: ip,
     });
   } catch (e) {
@@ -219,7 +234,10 @@ export async function POST(req: NextRequest) {
     // 尝试回滚 NewAPI:把 expired_time 改回 beforeExp.
     console.error('[renew] sqlite 写入失败,尝试回滚 NewAPI', e);
     try {
-      await updateTokenExpiredTime(orig.newapi_token_id, beforeExp);
+      await updateTokenExpiredTime(orig.newapi_token_id, beforeExp, orig.newapi_user_id);
+      if (quotaAdded && addQuotaUSD) {
+        await addTokenQuotaUSD(orig.newapi_token_id, -addQuotaUSD, orig.newapi_user_id);
+      }
       console.error('[renew] NewAPI 回滚成功 (token expired_time 改回原值)');
     } catch (rollbackErr) {
       console.error('[renew] NewAPI 回滚也失败:', rollbackErr);

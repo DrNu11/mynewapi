@@ -265,6 +265,9 @@ function inferContextAndOutputs(
   }
 
   const lower = name.toLowerCase()
+  if (lower === 'deepseek-v4-pro' || lower === 'deepseek-v4-flash') {
+    return { context: 1_000_000, maxOutput: 65_536 }
+  }
   if (lower.includes('1m') || lower.includes('-long')) {
     return { context: 1_000_000, maxOutput: 65_536 }
   }

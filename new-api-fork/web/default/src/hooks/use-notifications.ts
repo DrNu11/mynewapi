@@ -16,11 +16,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNotificationStore } from '@/stores/notification-store'
-import { getNotice } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
+import {
+  acknowledgeUserWarning,
+  getNotice,
+  getUserWarnings,
+} from '@/lib/api'
 import { useStatus } from '@/hooks/use-status'
+
+type NotificationTab = 'notice' | 'announcements' | 'warnings'
 
 function hashString(input: string): string {
   let hash = 0
@@ -63,9 +70,9 @@ function getAnnouncementKey(item: Record<string, unknown>): string {
  */
 export function useNotifications() {
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<'notice' | 'announcements'>(
-    'notice'
-  )
+  const [activeTab, setActiveTab] = useState<NotificationTab>('notice')
+  const lastAutoOpenedWarningRef = useRef('')
+  const authUser = useAuthStore((state) => state.auth.user)
 
   // Fetch Notice from API
   const {
@@ -84,6 +91,22 @@ export function useNotifications() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const announcements: Record<string, unknown>[] = announcementsEnabled
     ? ((status?.announcements || []) as Record<string, unknown>[]).slice(0, 20)
+    : []
+
+  const {
+    data: userWarningsResponse,
+    isLoading: userWarningsLoading,
+    refetch: refetchUserWarnings,
+  } = useQuery({
+    queryKey: ['user-warnings', authUser?.id],
+    queryFn: getUserWarnings,
+    enabled: Boolean(authUser?.id),
+    staleTime: 1000 * 60,
+    refetchInterval: 1000 * 60,
+  })
+
+  const userWarnings = userWarningsResponse?.success
+    ? userWarningsResponse.data || []
     : []
 
   // Notification store
@@ -116,23 +139,40 @@ export function useNotifications() {
     return {
       notice: noticeUnread,
       announcements: announcementsUnread,
-      total: noticeUnread + announcementsUnread,
+      warnings: userWarnings.length,
+      total: noticeUnread + announcementsUnread + userWarnings.length,
     }
-  }, [noticeContent, lastReadNotice, announcements, isAnnouncementRead])
+  }, [
+    noticeContent,
+    lastReadNotice,
+    announcements,
+    isAnnouncementRead,
+    userWarnings.length,
+  ])
+
+  const firstWarningKey = userWarnings[0] ? String(userWarnings[0].id) : ''
+
+  useEffect(() => {
+    if (!firstWarningKey || dialogOpen) return
+    if (lastAutoOpenedWarningRef.current === firstWarningKey) return
+    lastAutoOpenedWarningRef.current = firstWarningKey
+    setActiveTab('warnings')
+    setDialogOpen(true)
+  }, [firstWarningKey, dialogOpen])
 
   // Handle dialog open
-  const handleOpenDialog = (tab?: 'notice' | 'announcements') => {
+  const handleOpenDialog = (tab?: NotificationTab) => {
     // Mark Notice as read when opening dialog
     if (noticeContent) {
       markNoticeRead(noticeContent)
     }
 
-    setActiveTab(tab || 'notice')
+    setActiveTab(tab || (userWarnings.length > 0 ? 'warnings' : 'notice'))
     setDialogOpen(true)
   }
 
   // Handle tab change - mark announcements as read when switching to that tab
-  const handleTabChange = (tab: 'notice' | 'announcements') => {
+  const handleTabChange = (tab: NotificationTab) => {
     setActiveTab(tab)
 
     if (tab === 'announcements' && announcements.length > 0) {
@@ -140,6 +180,13 @@ export function useNotifications() {
         getAnnouncementKey(item)
       )
       markAnnouncementsRead(allKeys)
+    }
+  }
+
+  const handleAcknowledgeWarning = async (id: number) => {
+    const res = await acknowledgeUserWarning(id)
+    if (res?.success) {
+      await refetchUserWarnings()
     }
   }
 
@@ -154,12 +201,14 @@ export function useNotifications() {
     // Data
     notice: noticeContent,
     announcements,
-    loading: noticeLoading || statusLoading,
+    userWarnings,
+    loading: noticeLoading || statusLoading || userWarningsLoading,
 
     // Unread counts
     unreadCount: unreadCounts.total,
     unreadNoticeCount: unreadCounts.notice,
     unreadAnnouncementsCount: unreadCounts.announcements,
+    unreadWarningCount: unreadCounts.warnings,
 
     // Dialog state
     dialogOpen,
@@ -171,6 +220,7 @@ export function useNotifications() {
     openDialog: handleOpenDialog,
     closeDialog: () => setDialogOpen(false),
     closeToday: handleCloseToday,
+    acknowledgeWarning: handleAcknowledgeWarning,
     refetchNotice,
 
     // Status

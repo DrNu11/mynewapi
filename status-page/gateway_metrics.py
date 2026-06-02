@@ -170,11 +170,11 @@ def _query_mysql_ip_stats(window_seconds: int) -> dict:
     """
     since = int(time.time()) - window_seconds
     sql = (
-        "SELECT ip, token_name, "
+        "SELECT ip, token_name, token_id, user_id, username, "
         "       COUNT(*) AS req, "
         "       SUM(COALESCE(prompt_tokens,0) + COALESCE(completion_tokens,0)) AS tok "
         "FROM logs WHERE created_at >= %s AND type = 2 AND ip != '' AND ip IS NOT NULL "
-        "GROUP BY ip, token_name"
+        "GROUP BY ip, token_name, token_id, user_id, username"
     )
     try:
         with _mysql_conn() as conn:
@@ -187,16 +187,26 @@ def _query_mysql_ip_stats(window_seconds: int) -> dict:
 
     # 按 IP 聚合(横切 token)
     by_ip: dict[str, dict] = defaultdict(
-        lambda: {"requests": 0, "tokens": 0, "tokens_by_token": defaultdict(int)}
+        lambda: {"requests": 0, "tokens": 0, "tokens_by_token": defaultdict(int), "token_meta": {}}
     )
     # 按 token 聚合(横切 IP)
     by_token: dict[str, dict] = defaultdict(
-        lambda: {"requests": 0, "ips": defaultdict(int)}
+        lambda: {
+            "requests": 0,
+            "ips": defaultdict(int),
+            "token_name": "",
+            "token_id": 0,
+            "user_id": 0,
+            "username": "",
+        }
     )
 
     for r in rows:
         ip = r["ip"] or ""
         tname = r["token_name"] or "(no-name)"
+        token_id = int(r.get("token_id") or 0)
+        user_id = int(r.get("user_id") or 0)
+        username = r.get("username") or ""
         req = int(r["req"] or 0)
         tok = int(r["tok"] or 0)
 
@@ -204,8 +214,14 @@ def _query_mysql_ip_stats(window_seconds: int) -> dict:
         bi["requests"] += req
         bi["tokens"] += tok
         bi["tokens_by_token"][tname] += req
+        bi["token_meta"][tname] = {"token_id": token_id, "user_id": user_id, "username": username}
 
-        bt = by_token[tname]
+        token_key = f"{user_id}:{token_id}:{tname}"
+        bt = by_token[token_key]
+        bt["token_name"] = tname
+        bt["token_id"] = token_id
+        bt["user_id"] = user_id
+        bt["username"] = username
         bt["requests"] += req
         bt["ips"][ip] += req
 
@@ -213,12 +229,16 @@ def _query_mysql_ip_stats(window_seconds: int) -> dict:
     top_ips = []
     for ip, d in by_ip.items():
         token_top = max(d["tokens_by_token"].items(), key=lambda x: x[1], default=("", 0))
+        token_meta = d["token_meta"].get(token_top[0]) or {}
         top_ips.append(
             {
                 "ip": ip,
                 "requests": d["requests"],
                 "tokens": d["tokens"],
                 "top_token": token_top[0],
+                "top_token_id": token_meta.get("token_id") or 0,
+                "top_user_id": token_meta.get("user_id") or 0,
+                "top_username": token_meta.get("username") or "",
                 "distinct_tokens": len(d["tokens_by_token"]),
                 "suspicious": d["requests"] > IP_HIGH_FREQ_THRESHOLD,
             }
@@ -228,7 +248,7 @@ def _query_mysql_ip_stats(window_seconds: int) -> dict:
 
     # Abuse alerts
     alerts = []
-    for tname, d in by_token.items():
+    for _, d in by_token.items():
         ip_count = len(d["ips"])
         req_count = d["requests"]
         reasons = []
@@ -244,7 +264,10 @@ def _query_mysql_ip_stats(window_seconds: int) -> dict:
         top_ip = ips_sorted[0][0] if ips_sorted else ""
         alerts.append(
             {
-                "token_name": tname,
+                "token_name": d["token_name"],
+                "token_id": d["token_id"],
+                "user_id": d["user_id"],
+                "username": d["username"],
                 "ip_count": ip_count,
                 "request_count": req_count,
                 "reason": " · ".join(reasons),

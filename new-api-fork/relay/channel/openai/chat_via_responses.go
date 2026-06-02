@@ -64,6 +64,9 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	if info != nil && info.IsModelMapped && info.OriginModelName != "" {
+		chatResp.Model = info.OriginModelName
+	}
 
 	if usage == nil || usage.TotalTokens == 0 {
 		text := service.ExtractOutputTextFromResponses(&responsesResp)
@@ -85,6 +88,7 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
+	responseBody = []byte(maskGPTIdentityInData(string(responseBody), info))
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return usage, nil
@@ -100,6 +104,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	responseId := helper.GetResponseID(c)
 	createAt := time.Now().Unix()
 	model := info.UpstreamModelName
+	if info != nil && info.IsModelMapped && info.OriginModelName != "" {
+		model = info.OriginModelName
+	}
 
 	var (
 		usage       = &dto.Usage{}
@@ -312,7 +319,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		switch streamResp.Type {
 		case "response.created":
 			if streamResp.Response != nil {
-				if streamResp.Response.Model != "" {
+				if streamResp.Response.Model != "" && !(info != nil && info.IsModelMapped && info.OriginModelName != "") {
 					model = streamResp.Response.Model
 				}
 				if streamResp.Response.CreatedAt != 0 {
@@ -444,7 +451,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 		case "response.completed":
 			if streamResp.Response != nil {
-				if streamResp.Response.Model != "" {
+				if streamResp.Response.Model != "" && !(info != nil && info.IsModelMapped && info.OriginModelName != "") {
 					model = streamResp.Response.Model
 				}
 				if streamResp.Response.CreatedAt != 0 {

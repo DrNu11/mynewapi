@@ -420,13 +420,24 @@ export function RechargeFormCard({
           )}
         </div>
       ) : (
-        <Alert>
-          <AlertDescription>
-            {t(
-              'Online topup is not enabled. Please use redemption code or contact administrator.'
-            )}
-          </AlertDescription>
-        </Alert>
+        <div className='border-border bg-muted/20 flex flex-col items-center justify-center rounded-lg border px-4 py-8 text-center'>
+          <div className='bg-background mb-4 flex size-12 items-center justify-center rounded-lg border shadow-sm'>
+            <ExternalLink className='text-muted-foreground size-5' />
+          </div>
+          <div className='text-base font-medium'>{t('Go to online store')}</div>
+          <p className='text-muted-foreground mt-2 max-w-sm text-sm'>
+            {t('Buy a recharge code from the store, then redeem it here.')}
+          </p>
+          <Button
+            className='mt-4 gap-2'
+            onClick={() =>
+              window.open('https://pay.qxvx.cn/shop/codex', '_blank')
+            }
+          >
+            <ExternalLink className='size-4' />
+            {t('Open recharge store')}
+          </Button>
+        </div>
       )}
 
       {/* Creem Products Section */}

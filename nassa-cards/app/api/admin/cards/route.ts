@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/auth';
-import { insertCard, listCards, listPools, markExpiredCards, getStats, getRequestCountsByCardIds } from '@/lib/db';
+import { insertCard, listCards, listPools, markExpiredCards, getStats, getCurrentHourRequestCountsByCardIds } from '@/lib/db';
 import { generateCodes } from '@/lib/codes';
 import { isPlanId, PLAN_BY_ID, makePlanFromDays, MIN_CUSTOM_DAYS } from '@/lib/plans';
 import { CATEGORIES, isCategory, type Category } from '@/lib/categories';
@@ -29,8 +29,8 @@ export async function GET(req: NextRequest) {
   const stats = getStats();
   const pools = listPools();
 
-  // 给每张卡附上"近 1 小时实际请求数"(限速观测用)
-  const counts = getRequestCountsByCardIds(cards.map((c) => c.id), 3600);
+  // 给每张卡附上"当前自然小时请求数",与 RPH 限速口径保持一致。
+  const counts = getCurrentHourRequestCountsByCardIds(cards.map((c) => c.id));
   const enriched = cards.map((c) => ({ ...c, used_1h: counts[c.id] || 0 }));
 
   return NextResponse.json({ success: true, data: { cards: enriched, stats, pools } });
@@ -46,6 +46,8 @@ export async function POST(req: NextRequest) {
     notes?: string;
     /** 运营号池/批次标签(可选),存入 cards.pool */
     pool?: string;
+    /** 目标 NewAPI 用户 ID(可选),激活时 token 将创建到该用户名下 */
+    newapi_user_id?: number | string | null;
     /** 自定义天数,优先级高于 plan;省略或 0 则用 plan */
     custom_days?: number;
   };
@@ -57,6 +59,14 @@ export async function POST(req: NextRequest) {
 
   const { plan = '', category = '', count = 0, notes = '', custom_days, pool: poolRaw } = body;
   const pool = typeof poolRaw === 'string' && poolRaw.trim() ? poolRaw.trim().slice(0, 64) : null;
+  const newApiUserIdRaw = body.newapi_user_id;
+  const newApiUserId =
+    newApiUserIdRaw === undefined || newApiUserIdRaw === null || newApiUserIdRaw === ''
+      ? null
+      : Number(newApiUserIdRaw);
+  if (newApiUserId !== null && (!Number.isInteger(newApiUserId) || newApiUserId <= 0)) {
+    return NextResponse.json({ success: false, message: 'NewAPI 用户 ID 必须是正整数' }, { status: 400 });
+  }
 
   // 校验:custom_days 优先(允许 0.04 天 ≈ 1 小时 ~ 3650 天 = 10 年),否则用 plan
   let planMeta;
@@ -103,9 +113,11 @@ export async function POST(req: NextRequest) {
         activated_at: null,
         expires_at: null,
         claimed_at: null,
+        newapi_user_id: newApiUserId,
         newapi_token_id: null,
         newapi_token_key: null,
         activator_ip: null,
+        disable_reason: null,
         notes: notes || null,
       });
       inserted.push(code);

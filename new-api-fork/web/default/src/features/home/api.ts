@@ -17,7 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import type { AxiosRequestConfig } from 'axios'
 import type { HomePageContentResponse } from './types'
+
+const silentErrorConfig = {
+  skipErrorHandler: true,
+} as unknown as AxiosRequestConfig
 
 // ============================================================================
 // Home Page APIs
@@ -28,6 +33,6 @@ import type { HomePageContentResponse } from './types'
  * Returns Markdown/HTML content or iframe URL
  */
 export async function getHomePageContent(): Promise<HomePageContentResponse> {
-  const res = await api.get('/api/home_page_content')
+  const res = await api.get('/api/home_page_content', silentErrorConfig)
   return res.data
 }

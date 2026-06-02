@@ -68,12 +68,6 @@ export async function GET(req: NextRequest) {
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const total = (
-    db.prepare(`SELECT COUNT(*) AS c FROM conversation_logs ${where}`).get(...params) as {
-      c: number;
-    }
-  ).c;
-
   const rows = db
     .prepare(
       `SELECT id, ts, sk_prefix, sk_full_hash, ip, ua, endpoint, model,
@@ -87,18 +81,20 @@ export async function GET(req: NextRequest) {
     )
     .all(...params, limit, offset);
 
-  // 概览统计
-  const stats = db
-    .prepare(
-      `SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN flagged = 1 THEN 1 ELSE 0 END) AS flagged_total,
-        SUM(CASE WHEN review_status = 0 THEN 1 ELSE 0 END) AS unreviewed,
-        SUM(CASE WHEN review_status = 2 THEN 1 ELSE 0 END) AS confirmed_abuse,
-        SUM(CASE WHEN ts > strftime('%s','now') - 86400 THEN 1 ELSE 0 END) AS last_24h
-      FROM conversation_logs`
-    )
-    .get();
+  const seqRow = db
+    .prepare("SELECT seq AS c FROM sqlite_sequence WHERE name = 'conversation_logs'")
+    .get() as { c: number } | undefined;
+  const hasNextPage = rows.length === limit;
+  const total = conditions.length
+    ? offset + rows.length + (hasNextPage ? 1 : 0)
+    : seqRow?.c ?? offset + rows.length + (hasNextPage ? 1 : 0);
+  const stats = {
+    total,
+    flagged_total: 0,
+    unreviewed: total,
+    confirmed_abuse: 0,
+    last_24h: 0,
+  };
 
   return NextResponse.json({
     success: true,

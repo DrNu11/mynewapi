@@ -2431,7 +2431,6 @@ export function renderModelPriceSimple(opts) {
     cache_creation_ratio_1h: cacheCreationRatio1h = 1.0,
     image = false,
     image_ratio: imageRatio = 1.0,
-    is_system_prompt_overwritten: isSystemPromptOverride = false,
     provider = 'openai',
     displayMode = 'price',
     outputMode = 'text',
@@ -2451,7 +2450,7 @@ export function renderModelPriceSimple(opts) {
     cacheCreationRatio1h,
     image,
     imageRatio,
-    isSystemPromptOverride,
+    isSystemPromptOverride: false,
     displayMode,
     outputMode,
   });

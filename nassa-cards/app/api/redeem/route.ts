@@ -114,6 +114,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (card.status === 'disabled') {
+    return NextResponse.json(
+      { success: false, message: card.disable_reason || '该卡密已被禁用,请联系客服' },
+      { status: 403 }
+    );
+  }
+
   if (card.status === 'activating') {
     // 已被其他并发请求占领,稍后重试或同一卡密二次输入
     return NextResponse.json(
@@ -149,7 +156,15 @@ export async function POST(req: NextRequest) {
   const planGroup = planMeta?.newapiGroup; // e.g. '30d-unlimited' → 'pro'
   let tokenInfo;
   try {
-    tokenInfo = await createTokenAndGetKey(code, card.plan_days, modelLimits, planQuotaUSD, planNoExpire, planGroup);
+    tokenInfo = await createTokenAndGetKey(
+      code,
+      card.plan_days,
+      modelLimits,
+      planQuotaUSD,
+      planNoExpire,
+      planGroup,
+      card.newapi_user_id,
+    );
   } catch (e: any) {
     console.error('[redeem] NewAPI 调用失败', e);
     // 释放占领,允许重试

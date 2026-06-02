@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCardByCode } from '@/lib/db';
+import { countActivatedCardsForTokenPlan, getCardByCode } from '@/lib/db';
 import { getTokenById } from '@/lib/newapi';
 import { PLAN_BY_ID, isPlanId } from '@/lib/plans';
 
@@ -13,7 +13,7 @@ const GPT_WEEKLY_QUOTA_USD = 1000;
 const GPT_PRO_PLAN = '30d-unlimited';
 
 /** 仅允许 GPT 周卡 / GPT 尊享套餐查询 */
-function creditPlanTotalUSD(category: string | null, plan: string): number | null {
+function creditPlanBaseTotalUSD(category: string | null, plan: string): number | null {
   if (category !== 'gpt') return null;
   if (plan === GPT_WEEKLY_PLAN) return GPT_WEEKLY_QUOTA_USD;
   if (plan === GPT_PRO_PLAN) return PLAN_BY_ID[GPT_PRO_PLAN].quotaUSD ?? 2000;
@@ -86,8 +86,8 @@ export async function POST(req: NextRequest) {
   if (!card) {
     return NextResponse.json({ success: false, message: denyMsg }, { status: 404 });
   }
-  const totalUSD = creditPlanTotalUSD(card.category, card.plan);
-  if (totalUSD === null) {
+  const baseTotalUSD = creditPlanBaseTotalUSD(card.category, card.plan);
+  if (baseTotalUSD === null) {
     return NextResponse.json({ success: false, message: denyMsg }, { status: 403 });
   }
   if (card.status !== 'activated') {
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
   // 拉 NewAPI 真实余量
   let token: Awaited<ReturnType<typeof getTokenById>>;
   try {
-    token = await getTokenById(card.newapi_token_id);
+    token = await getTokenById(card.newapi_token_id, card.newapi_user_id);
   } catch (e: any) {
     return NextResponse.json(
       { success: false, message: `查询额度失败: ${e?.message || e}` },
@@ -115,6 +115,17 @@ export async function POST(req: NextRequest) {
   }
 
   const planMeta = isPlanId(card.plan) ? PLAN_BY_ID[card.plan] : null;
+  const totalUSD = card.category === 'gpt' && card.plan === GPT_WEEKLY_PLAN
+    ? Math.max(
+      GPT_WEEKLY_QUOTA_USD,
+      countActivatedCardsForTokenPlan({
+        tokenId: card.newapi_token_id,
+        tokenKey: card.newapi_token_key,
+        category: 'gpt',
+        plan: GPT_WEEKLY_PLAN,
+      }) * GPT_WEEKLY_QUOTA_USD,
+    )
+    : baseTotalUSD;
   const remainQuota = Number(token.remain_quota || 0);
   const usedQuotaRaw = Number((token as Record<string, unknown>).used_quota || 0);
   // 极少数情况下 used_quota 不返回,用 totalUSD * QUOTA_PER_USD - remain_quota 兜底

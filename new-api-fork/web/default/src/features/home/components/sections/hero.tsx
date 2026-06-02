@@ -18,9 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
 import { ArrowRight } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
-import { HeroTerminalDemo } from '../hero-terminal-demo'
 
 interface HeroProps {
   className?: string
@@ -28,83 +25,71 @@ interface HeroProps {
 }
 
 export function Hero(props: HeroProps) {
-  const { t } = useTranslation()
-
   return (
-    <section className='relative z-10 flex flex-col items-center overflow-hidden px-6 pt-28 pb-16 md:pt-36 md:pb-24'>
-      {/* Radial gradient background */}
+    <section className='relative z-10 flex min-h-[640px] flex-col items-center justify-center overflow-hidden bg-[#000000] px-6 pt-28 pb-16 text-center md:min-h-[760px] md:pt-40 md:pb-24'>
       <div
         aria-hidden
-        className='pointer-events-none absolute inset-0 -z-10 opacity-25 dark:opacity-[0.12]'
-        style={{
-          background: [
-            'radial-gradient(ellipse 60% 50% at 20% 20%, oklch(0.72 0.18 250 / 80%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 50% 40% at 80% 15%, oklch(0.65 0.15 200 / 60%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 40% 35% at 40% 80%, oklch(0.70 0.12 280 / 40%) 0%, transparent 70%)',
-          ].join(', '),
-        }}
+        className='pointer-events-none absolute inset-x-0 top-0 -z-10 h-[520px] bg-[radial-gradient(ellipse_70%_48%_at_50%_0%,rgba(130,116,255,0.18),rgba(0,0,0,0)_68%)]'
       />
-      {/* Grid pattern */}
       <div
         aria-hidden
-        className='absolute inset-0 -z-10 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_30%,black_20%,transparent_100%)] bg-[size:4rem_4rem] opacity-[0.08]'
+        className='pointer-events-none absolute inset-x-[12%] top-36 -z-10 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent'
       />
 
-      <div className='flex max-w-3xl flex-col items-center text-center'>
-        <h1
-          className='landing-animate-fade-up text-[clamp(2rem,5.5vw,3.5rem)] leading-[1.15] font-bold tracking-tight'
+      <div className='mx-auto flex max-w-5xl flex-col items-center'>
+        <p
+          className='landing-animate-fade-up text-sm font-medium tracking-normal text-[#86868B] uppercase opacity-0'
           style={{ animationDelay: '0ms' }}
         >
-          {t('Unified API Gateway for')}
-          <br />
-          <span className='bg-gradient-to-r from-blue-400 via-violet-400 to-purple-500 bg-clip-text text-transparent'>
-            {t('All Your AI Models')}
-          </span>
+          PRO-LEVEL AI PROXY
+        </p>
+        <h1
+          className='landing-animate-fade-up mt-5 text-[clamp(4.5rem,13vw,10rem)] leading-[0.9] font-semibold tracking-normal text-[#F5F5F7] opacity-0'
+          style={{ animationDelay: '100ms' }}
+        >
+          NassaAPI
         </h1>
         <p
-          className='landing-animate-fade-up text-muted-foreground/80 mt-5 max-w-lg text-base leading-relaxed opacity-0 md:text-lg'
-          style={{ animationDelay: '80ms' }}
+          className='landing-animate-fade-up mt-6 max-w-2xl text-xl leading-relaxed tracking-normal text-[#86868B] opacity-0 md:text-3xl'
+          style={{ animationDelay: '200ms' }}
         >
-          {t('Power AI applications, manage digital assets, connect the Future')}
+          让 AI 编程触手可及
+        </p>
+        <p
+          className='landing-animate-fade-up mt-4 max-w-xl text-sm leading-7 text-[#86868B] opacity-0 md:text-base'
+          style={{ animationDelay: '300ms' }}
+        >
+          支持 Claude、GPT、Gemini 与全主流模型，统一 OpenAI 兼容协议，面向开发者的高性能中转网关。
         </p>
         <div
-          className='landing-animate-fade-up mt-8 flex items-center gap-3 opacity-0'
-          style={{ animationDelay: '160ms' }}
+          className='landing-animate-fade-up mt-10 flex flex-col items-center gap-5 opacity-0 sm:flex-row'
+          style={{ animationDelay: '400ms' }}
         >
           {props.isAuthenticated ? (
-            <Button
-              className='group rounded-lg'
-              render={<Link to='/dashboard' />}
+            <Link
+              to='/dashboard'
+              className='hig-primary-action inline-flex h-12 items-center justify-center rounded-full bg-[#F5F5F7] px-7 text-[15px] font-medium text-[#000000]'
             >
-              {t('Go to Dashboard')}
-              <ArrowRight className='ml-1 size-3.5 transition-transform duration-200 group-hover:translate-x-0.5' />
-            </Button>
+              进入控制台
+            </Link>
           ) : (
             <>
-              <Button
-                className='group rounded-lg'
-                render={<Link to='/sign-up' />}
+              <Link
+                to='/sign-up'
+                className='hig-primary-action inline-flex h-12 items-center justify-center rounded-full bg-[#F5F5F7] px-7 text-[15px] font-medium text-[#000000]'
               >
-                {t('Get Started')}
-                <ArrowRight className='ml-1 size-3.5 transition-transform duration-200 group-hover:translate-x-0.5' />
-              </Button>
-              <Button
-                variant='outline'
-                className='border-border/50 hover:border-border hover:bg-muted/50 rounded-lg'
-                render={<Link to='/pricing' />}
+                开始使用
+              </Link>
+              <Link
+                to='/pricing'
+                className='group inline-flex h-12 items-center justify-center rounded-full px-2 text-[15px] font-medium text-[#F5F5F7]'
               >
-                {t('View Pricing')}
-              </Button>
+                了解更多
+                <ArrowRight className='ml-1.5 size-4 transition-transform duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5' />
+              </Link>
             </>
           )}
         </div>
-      </div>
-
-      <div
-        className='landing-animate-fade-up w-full opacity-0'
-        style={{ animationDelay: '300ms' }}
-      >
-        <HeroTerminalDemo />
       </div>
     </section>
   )

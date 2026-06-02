@@ -1059,3 +1059,64 @@ mysql `-B` batch mode **把 `TO_BASE64()` 输出内部换行(每 76 字符)转�
 > 改 channel priority 前,先看 ASC vs DESC,先看 abilities 表,先看 channel_affinity 缓存,先确认 channel 成本 — 4 个先。
 >
 > 这一次事故的代价是 15 分钟全网中断 + 用户极度愤怒。下次别犯。
+
+---
+
+## 2026-05-29 nassa-cards NewAPI 用户归属绑定
+
+**需求**:`card.nassaapi.xyz/admin` 生成卡密时填写客户 NewAPI 用户 ID,客户激活后的 token 使用日志要出现在客户自己的 NewAPI 使用日志下。
+
+**已上线路径**:
+
+1. `cards.newapi_user_id` 保存目标客户 ID。
+2. 激活时先用默认管理员身份创建 token 并拿 key。
+3. 通过 NewAPI MySQL 把 `tokens.user_id` 迁移到目标客户 ID。
+4. 客户实际请求时 NewAPI 原生日志写 `logs.user_id=<客户ID>`。
+
+**踩坑**:不要用管理员 `NEWAPI_ACCESS_TOKEN` 直接把 `New-Api-User` header 改成客户 ID。生产验证会 401:
+
+```text
+Unauthorized, New-Api-User does not match logged in user
+```
+
+**生产验证**:
+
+```text
+测试卡 DE-25GA-5Y25-8FXS → token_id=754
+cards.db newapi_user_id=444
+NewAPI tokens.user_id=444
+NewAPI logs: user_id=444 token_id=754 model_name=deepseek-v4-flash count=1
+```
+
+测试 token/log/card 已清理,避免污染用户 444。
+
+**配置要求**:`/opt/nassa-cards/.env.local` 必须有 `NEWAPI_SQL_DSN`,host 使用 `newapi-prod-mysql-1` 的 Docker bridge IP。详细记录见:
+
+`/Users/w/Desktop/newapi/rule/NASSA_CARDS_NEWAPI_USER_BINDING_2026_05_29.md`
+
+---
+
+## 2026-05-30 nassa-cards 日卡每日 250 美元保护
+
+**需求**:防止 1 天卡被并发爆刷,单日消耗超过 250 美元后给客户明确提示,不继续请求上游。
+
+**已上线逻辑**:
+
+1. `/v1/[...path]` 在模型白名单之后、RPH 预占之前检查。
+2. 仅对 `cards.plan = '1d'` 且有 `newapi_token_id` 的卡生效。
+3. 从 NewAPI MySQL `logs` 汇总该 token 北京时间当天 00:00 起的正向 `quota`。
+4. `500000 quota = 1 USD`,今日用量 `>= $250` 返回 `HTTP 429`。
+5. 超额拦截不写 `request_logs`,不进上游,所以不占 RPH 且不产生新成本。
+6. 校验 SQL 失败时日卡 fail-closed 返回 `HTTP 503`,避免 DB 异常时被绕过。
+
+**生产验证**:
+
+```text
+$252 fake log → HTTP 429,日卡今日使用额度已达 $250 上限,request_logs=0
+$249 fake log → 未被日卡保护拦截,进入上游后 fake sk 返回 HTTP 401,request_logs=1
+测试卡 / request_logs / NewAPI logs 均已清理,残留 0
+```
+
+**部署注意**:`/opt/nassa-cards/data` 当前很大,不要完整压缩备份 data。远端部署保留 data/.env.local 时用 `mv` 临时挪走再移回。详细记录见:
+
+`/Users/w/Desktop/newapi/rule/NASSA_CARDS_DAY_CARD_DAILY_CAP_2026_05_30.md`

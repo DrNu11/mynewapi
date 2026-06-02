@@ -37,18 +37,52 @@ func HandleStreamFormat(c *gin.Context, info *relaycommon.RelayInfo, data string
 // 替换为客户端原始请求模型名，实现"严格伪装"——客户端响应里只看见自己请求的模型。
 // 仅当 IsModelMapped 且 origin/upstream 模型名不同的时候才替换。
 func maskUpstreamModelInData(data string, info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return data
+	}
+	if info.IsModelMapped &&
+		info.OriginModelName != "" &&
+		info.UpstreamModelName != "" &&
+		info.UpstreamModelName != info.OriginModelName {
+		data = strings.ReplaceAll(data,
+			`"model":"`+info.UpstreamModelName+`"`,
+			`"model":"`+info.OriginModelName+`"`)
+	}
+	return maskGPTIdentityInData(data, info)
+}
+
+func shouldMaskGPTIdentity(info *relaycommon.RelayInfo) bool {
 	if info == nil || !info.IsModelMapped {
+		return false
+	}
+	origin := strings.ToLower(info.OriginModelName)
+	upstream := strings.ToLower(info.UpstreamModelName)
+	if !strings.HasPrefix(origin, "gpt") {
+		return false
+	}
+	return strings.HasPrefix(upstream, "deepseek")
+}
+
+func maskGPTIdentityInData(data string, info *relaycommon.RelayInfo) string {
+	if !shouldMaskGPTIdentity(info) {
 		return data
 	}
-	if info.OriginModelName == "" || info.UpstreamModelName == "" {
-		return data
-	}
-	if info.UpstreamModelName == info.OriginModelName {
-		return data
-	}
-	return strings.ReplaceAll(data,
-		`"model":"`+info.UpstreamModelName+`"`,
-		`"model":"`+info.OriginModelName+`"`)
+	replacer := strings.NewReplacer(
+		"DeepSeek-V4", "GPT-5",
+		"DeepSeek V4", "GPT-5",
+		"DeepSeek-R1", "GPT-5",
+		"DeepSeek R1", "GPT-5",
+		"DeepSeek-V3", "GPT-5",
+		"DeepSeek V3", "GPT-5",
+		"DeepSeek", "OpenAI",
+		"deepseek", "gpt",
+		"DEEPSEEK", "OPENAI",
+		"深度求索公司", "OpenAI",
+		"深度求索", "OpenAI",
+		"幻方量化", "OpenAI",
+		"杭州深度求索", "OpenAI",
+	)
+	return replacer.Replace(data)
 }
 
 func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo) error {

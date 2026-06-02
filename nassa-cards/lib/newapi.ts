@@ -7,6 +7,14 @@
  * 认证: Authorization: <access_token>  +  New-Api-User: <user_id>
  */
 
+import {
+  addTokenQuotaInDb,
+  getTokenByIdFromDb,
+  transferTokenToNewApiUser,
+  updateTokenExpiredTimeInDb,
+  updateTokenStatusInDb,
+} from './newapi-db';
+
 interface NewApiResponse<T = any> {
   success: boolean;
   message?: string;
@@ -19,17 +27,21 @@ function env(key: string, required = true): string {
   return v || '';
 }
 
-function authHeaders(): Record<string, string> {
+function authHeaders(userId?: number | null): Record<string, string> {
   return {
     'Authorization': env('NEWAPI_ACCESS_TOKEN'),
-    'New-Api-User': env('NEWAPI_USER_ID'),
+    'New-Api-User': String(userId ?? env('NEWAPI_USER_ID')),
     'Content-Type': 'application/json',
   };
 }
 
 const REQUEST_TIMEOUT_MS = 15000;
 
-async function call<T = any>(path: string, init: RequestInit = {}): Promise<NewApiResponse<T>> {
+async function call<T = any>(
+  path: string,
+  init: RequestInit = {},
+  userId?: number | null,
+): Promise<NewApiResponse<T>> {
   const base = env('NEWAPI_BASE_URL').replace(/\/$/, '');
   const url = `${base}${path}`;
   const ctl = new AbortController();
@@ -38,7 +50,7 @@ async function call<T = any>(path: string, init: RequestInit = {}): Promise<NewA
   try {
     res = await fetch(url, {
       ...init,
-      headers: { ...authHeaders(), ...(init.headers as Record<string, string> || {}) },
+      headers: { ...authHeaders(userId), ...(init.headers as Record<string, string> || {}) },
       cache: 'no-store',
       signal: ctl.signal,
     });
@@ -77,6 +89,8 @@ export interface CreateTokenInput {
   group?: string;
   /** USD 额度;不传/<=0 则 unlimited_quota=true(吃 root 池) */
   quotaUSD?: number;
+  /** 目标 NewAPI 用户 ID;不传则使用 NEWAPI_USER_ID */
+  targetUserId?: number | null;
 }
 
 /** 创建 token (NewAPI 不返回 id/key,需要后续 search 找到) */
@@ -95,7 +109,7 @@ export async function createToken(input: CreateTokenInput): Promise<void> {
       cross_group_retry: false,
       allow_ips: '',
     }),
-  });
+  }, input.targetUserId);
 }
 
 interface NewApiTokenSummary {
@@ -107,9 +121,11 @@ interface NewApiTokenSummary {
 }
 
 /** 按 name 搜索 token,返回 id;若未找到返回 null */
-export async function findTokenIdByName(name: string): Promise<number | null> {
+export async function findTokenIdByName(name: string, targetUserId?: number | null): Promise<number | null> {
   const body = await call<{ items?: NewApiTokenSummary[]; records?: NewApiTokenSummary[] } | NewApiTokenSummary[]>(
-    `/api/token/search?keyword=${encodeURIComponent(name)}`
+    `/api/token/search?keyword=${encodeURIComponent(name)}`,
+    {},
+    targetUserId,
   );
   // NewAPI 返回结构可能是 {data: {items: [...]}} 或 {data: [...]} 或 {data: {records: [...]}}
   let items: NewApiTokenSummary[] = [];
@@ -122,18 +138,23 @@ export async function findTokenIdByName(name: string): Promise<number | null> {
 }
 
 /** 重试找 token id;DB 主从延迟时第一次可能找不到 */
-async function findTokenIdWithRetry(name: string, attempts = 5, delayMs = 250): Promise<number | null> {
+async function findTokenIdWithRetry(
+  name: string,
+  targetUserId?: number | null,
+  attempts = 5,
+  delayMs = 250,
+): Promise<number | null> {
   for (let i = 0; i < attempts; i++) {
     if (i > 0) await new Promise((r) => setTimeout(r, delayMs));
-    const id = await findTokenIdByName(name);
+    const id = await findTokenIdByName(name, targetUserId);
     if (id !== null) return id;
   }
   return null;
 }
 
 /** 根据 id 获取完整 sk-xxx key */
-export async function getTokenKey(tokenId: number): Promise<string> {
-  const body = await call<{ key: string }>(`/api/token/${tokenId}/key`, { method: 'POST' });
+export async function getTokenKey(tokenId: number, targetUserId?: number | null): Promise<string> {
+  const body = await call<{ key: string }>(`/api/token/${tokenId}/key`, { method: 'POST' }, targetUserId);
   const raw = body.data?.key;
   if (!raw) throw new Error('NewAPI 未返回 token key');
   // NewAPI 返回的 key 不带 sk- 前缀,客户端调用时必须带前缀,这里统一补上
@@ -141,19 +162,27 @@ export async function getTokenKey(tokenId: number): Promise<string> {
 }
 
 /** 删除 token (用于清理过期或激活失败的 token) */
-export async function deleteToken(tokenId: number): Promise<void> {
-  await call(`/api/token/${tokenId}`, { method: 'DELETE' });
+export async function deleteToken(tokenId: number, targetUserId?: number | null): Promise<void> {
+  await call(`/api/token/${tokenId}`, { method: 'DELETE' }, targetUserId);
 }
 
 /**
  * 更新 token 状态 (1=enabled, 2=disabled)
  * 走 PUT /api/token/?status_only=1, 只改 status 字段, 不动 quota/expired_time 等。
  */
-export async function updateTokenStatus(tokenId: number, status: 1 | 2): Promise<void> {
+export async function updateTokenStatus(
+  tokenId: number,
+  status: 1 | 2,
+  targetUserId?: number | null,
+): Promise<void> {
+  if (targetUserId) {
+    await updateTokenStatusInDb(tokenId, status);
+    return;
+  }
   await call(`/api/token/?status_only=1`, {
     method: 'PUT',
     body: JSON.stringify({ id: tokenId, status }),
-  });
+  }, targetUserId);
 }
 
 /** NewAPI 完整 token 对象 (PUT 时需要回传) */
@@ -177,8 +206,11 @@ interface NewApiToken {
 }
 
 /** GET /api/token/:id — 返回完整 token 对象 (NewAPI 真实 schema) */
-export async function getTokenById(tokenId: number): Promise<NewApiToken> {
-  const body = await call<NewApiToken>(`/api/token/${tokenId}`);
+export async function getTokenById(tokenId: number, targetUserId?: number | null): Promise<NewApiToken> {
+  if (targetUserId) {
+    return await getTokenByIdFromDb(tokenId) as NewApiToken;
+  }
+  const body = await call<NewApiToken>(`/api/token/${tokenId}`, {}, targetUserId);
   if (!body.data) throw new Error(`NewAPI token ${tokenId} 不存在或返回空`);
   return body.data;
 }
@@ -197,21 +229,25 @@ export async function getTokenById(tokenId: number): Promise<NewApiToken> {
 export async function updateTokenExpiredTime(
   tokenId: number,
   newExpiredTime: number,
+  targetUserId?: number | null,
 ): Promise<{ before: number; after: number }> {
   if (!Number.isFinite(newExpiredTime) || newExpiredTime <= 0) {
     throw new Error(`非法 newExpiredTime=${newExpiredTime}`);
   }
-  const before = await getTokenById(tokenId);
+  if (targetUserId) {
+    return await updateTokenExpiredTimeInDb(tokenId, newExpiredTime);
+  }
+  const before = await getTokenById(tokenId, targetUserId);
   const beforeExp = Number(before.expired_time);
 
   // PUT 完整对象,只覆盖 expired_time
   await call(`/api/token/`, {
     method: 'PUT',
     body: JSON.stringify({ ...before, expired_time: newExpiredTime }),
-  });
+  }, targetUserId);
 
   // 验证落地
-  const after = await getTokenById(tokenId);
+  const after = await getTokenById(tokenId, targetUserId);
   const afterExp = Number(after.expired_time);
   if (afterExp !== newExpiredTime) {
     throw new Error(
@@ -219,6 +255,45 @@ export async function updateTokenExpiredTime(
     );
   }
   return { before: beforeExp, after: afterExp };
+}
+
+/** 调整 token USD 额度,用于续费卡叠加额度和失败回滚。 */
+export async function addTokenQuotaUSD(
+  tokenId: number,
+  addUSD: number,
+  targetUserId?: number | null,
+): Promise<{ before: number; after: number }> {
+  if (!Number.isFinite(addUSD) || addUSD === 0) {
+    throw new Error(`非法 addUSD=${addUSD}`);
+  }
+  const before = await getTokenById(tokenId, targetUserId);
+  const beforeQuota = Number(before.remain_quota || 0);
+  const addQuota = Math.round(addUSD * QUOTA_PER_USD);
+  if (targetUserId) {
+    return await addTokenQuotaInDb(tokenId, addQuota);
+  }
+  const afterQuota = beforeQuota + addQuota;
+  if (afterQuota < 0) {
+    throw new Error(`额度调整后为负数 (before=${beforeQuota},add=${addQuota})`);
+  }
+
+  await call(`/api/token/`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      ...before,
+      unlimited_quota: false,
+      remain_quota: afterQuota,
+    }),
+  }, targetUserId);
+
+  const after = await getTokenById(tokenId, targetUserId);
+  const landed = Number(after.remain_quota || 0);
+  if (landed !== afterQuota || after.unlimited_quota) {
+    throw new Error(
+      `NewAPI 端 quota 未生效 (期望 remain=${afterQuota},实际 remain=${landed},unlimited=${after.unlimited_quota})`,
+    );
+  }
+  return { before: beforeQuota, after: landed };
 }
 
 /**
@@ -234,9 +309,13 @@ export async function createTokenAndGetKey(
   modelLimits: string,
   quotaUSD?: number,
   noExpire?: boolean,
-  group?: string
+  group?: string,
+  targetUserId?: number | null,
 ): Promise<{ id: number; key: string; expiredAt: number }> {
   const expiredAt = noExpire ? -1 : Math.floor(Date.now() / 1000) + daysValid * 86400;
+  // NewAPI 管理 API 要求 Authorization 登录用户与 New-Api-User 完全一致,
+  // 不能直接用管理员 access token 冒充客户创建。这里先按默认管理员创建,
+  // 拿到 key 后再把 tokens.user_id 迁移到目标客户,这样后续使用日志归客户账号。
   await createToken({ name, expired_time: expiredAt, model_limits: modelLimits, quotaUSD, group });
 
   // 重试找 id (默认 5 次 × 250ms = 最多等 1s)
@@ -249,6 +328,7 @@ export async function createTokenAndGetKey(
 
   try {
     const key = await getTokenKey(id);
+    await transferTokenToNewApiUser(id, targetUserId);
     return { id, key, expiredAt };
   } catch (e) {
     // 拿不到 key,清理孤儿 token

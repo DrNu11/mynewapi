@@ -32,9 +32,14 @@ export function Home() {
 
   if (!isLoaded) {
     return (
-      <PublicLayout showMainContainer={false}>
-        <main className='flex min-h-screen items-center justify-center'>
-          <div className='text-muted-foreground'>{t('Loading...')}</div>
+      <PublicLayout
+        showMainContainer={false}
+        logo={<NassaLogo />}
+        siteName='NassaAPI'
+        headerProps={{ className: 'nassa-apple-header' }}
+      >
+        <main className='nassa-apple-home dark flex min-h-screen items-center justify-center bg-[#000000] text-[#86868B]'>
+          <div>{t('Loading...')}</div>
         </main>
       </PublicLayout>
     )
@@ -42,8 +47,13 @@ export function Home() {
 
   if (content) {
     return (
-      <PublicLayout showMainContainer={false}>
-        <main className='overflow-x-hidden'>
+      <PublicLayout
+        showMainContainer={false}
+        logo={<NassaLogo />}
+        siteName='NassaAPI'
+        headerProps={{ className: 'nassa-apple-header' }}
+      >
+        <main className='nassa-apple-home dark min-h-screen overflow-x-hidden bg-[#000000] text-[#F5F5F7]'>
           {isUrl ? (
             <iframe
               src={content}
@@ -61,13 +71,34 @@ export function Home() {
   }
 
   return (
-    <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
+    <PublicLayout
+      showMainContainer={false}
+      logo={<NassaLogo />}
+      siteName='NassaAPI'
+      headerProps={{ className: 'nassa-apple-header' }}
+    >
+      <div className='nassa-apple-home dark min-h-screen bg-[#000000] text-[#F5F5F7]'>
+        <main className='overflow-x-hidden'>
+          <Hero isAuthenticated={isAuthenticated} />
+          <Features />
+          <Stats />
+          <HowItWorks />
+          <CTA isAuthenticated={isAuthenticated} />
+        </main>
+        <Footer />
+      </div>
     </PublicLayout>
+  )
+}
+
+function NassaLogo() {
+  return (
+    <span
+      aria-hidden
+      className='flex size-7 items-center justify-center text-base font-semibold text-[#8B5CF6]'
+      style={{ color: '#8B5CF6' }}
+    >
+      N
+    </span>
   )
 }

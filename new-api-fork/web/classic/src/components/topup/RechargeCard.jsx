@@ -44,6 +44,7 @@ import {
   TrendingUp,
   Receipt,
   Sparkles,
+  ExternalLink,
 } from 'lucide-react';
 import { IconGift } from '@douyinfe/semi-icons';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
@@ -107,12 +108,13 @@ const RechargeCard = ({
     !subscriptionLoading && subscriptionPlans.length > 0;
   const regularPayMethods = payMethods || [];
 
+  // Keep the wallet on Add Funds first even when subscription plans exist.
   useEffect(() => {
     if (initialTabSetRef.current) return;
     if (subscriptionLoading) return;
-    setActiveTab(shouldShowSubscription ? 'subscription' : 'topup');
+    setActiveTab('topup');
     initialTabSetRef.current = true;
-  }, [shouldShowSubscription, subscriptionLoading]);
+  }, [subscriptionLoading]);
 
   useEffect(() => {
     if (!shouldShowSubscription && activeTab !== 'topup') {
@@ -555,14 +557,27 @@ const RechargeCard = ({
             </div>
           </Form>
         ) : (
-          <Banner
-            type='info'
-            description={t(
-              '管理员未开启在线充值功能，请联系管理员开启或使用兑换码充值。',
-            )}
-            className='!rounded-xl'
-            closeIcon={null}
-          />
+          <div className='flex flex-col items-center justify-center py-8 px-4 text-center'>
+            <Avatar size='large' color='blue' className='mb-4 shadow-md'>
+              <ExternalLink size={20} />
+            </Avatar>
+            <Typography.Text className='text-base font-medium mb-2'>
+              {t('前往在线充值')}
+            </Typography.Text>
+            <Typography.Text type='tertiary' className='text-sm mb-4'>
+              {t('点击下方按钮跳转到充值商店购买额度')}
+            </Typography.Text>
+            <Button
+              theme='solid'
+              type='primary'
+              icon={<ExternalLink size={16} />}
+              onClick={() =>
+                window.open('https://pay.qxvx.cn/shop/codex', '_blank')
+              }
+            >
+              {t('前往充值商店')}
+            </Button>
+          </div>
         )}
       </Card>
 
@@ -659,6 +674,17 @@ const RechargeCard = ({
           <TabPane
             tab={
               <div className='flex items-center gap-2'>
+                <Wallet size={16} />
+                {t('额度充值')}
+              </div>
+            }
+            itemKey='topup'
+          >
+            <div className='py-2'>{topupContent}</div>
+          </TabPane>
+          <TabPane
+            tab={
+              <div className='flex items-center gap-2'>
                 <Sparkles size={16} />
                 {t('订阅套餐')}
               </div>
@@ -682,17 +708,6 @@ const RechargeCard = ({
                 withCard={false}
               />
             </div>
-          </TabPane>
-          <TabPane
-            tab={
-              <div className='flex items-center gap-2'>
-                <Wallet size={16} />
-                {t('额度充值')}
-              </div>
-            }
-            itemKey='topup'
-          >
-            <div className='py-2'>{topupContent}</div>
           </TabPane>
         </Tabs>
       ) : (

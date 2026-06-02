@@ -243,13 +243,6 @@ function buildDetailSegments(
     }
   }
 
-  if (other.is_system_prompt_overwritten) {
-    segments.push({
-      text: t('System Prompt Override'),
-      danger: true,
-    })
-  }
-
   return segments
 }
 

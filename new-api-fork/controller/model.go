@@ -140,15 +140,15 @@ func ListModels(c *gin.Context, modelType int) {
 			}
 			if oaiModel, ok := openAIModelsMap[allowModel]; ok {
 				oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(allowModel)
-				userOpenAiModels = append(userOpenAiModels, oaiModel)
+				userOpenAiModels = append(userOpenAiModels, decorateOpenAIModelMetadata(oaiModel))
 			} else {
-				userOpenAiModels = append(userOpenAiModels, dto.OpenAIModels{
+				userOpenAiModels = append(userOpenAiModels, decorateOpenAIModelMetadata(dto.OpenAIModels{
 					Id:                     allowModel,
 					Object:                 "model",
 					Created:                1626777600,
 					OwnedBy:                "custom",
 					SupportedEndpointTypes: model.GetModelSupportEndpointTypes(allowModel),
-				})
+				}))
 			}
 		}
 	} else {
@@ -187,15 +187,15 @@ func ListModels(c *gin.Context, modelType int) {
 			}
 			if oaiModel, ok := openAIModelsMap[modelName]; ok {
 				oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
-				userOpenAiModels = append(userOpenAiModels, oaiModel)
+				userOpenAiModels = append(userOpenAiModels, decorateOpenAIModelMetadata(oaiModel))
 			} else {
-				userOpenAiModels = append(userOpenAiModels, dto.OpenAIModels{
+				userOpenAiModels = append(userOpenAiModels, decorateOpenAIModelMetadata(dto.OpenAIModels{
 					Id:                     modelName,
 					Object:                 "model",
 					Created:                1626777600,
 					OwnedBy:                "custom",
 					SupportedEndpointTypes: model.GetModelSupportEndpointTypes(modelName),
-				})
+				}))
 			}
 		}
 	}
@@ -262,6 +262,7 @@ func EnabledListModels(c *gin.Context) {
 func RetrieveModel(c *gin.Context, modelType int) {
 	modelId := c.Param("model")
 	if aiModel, ok := openAIModelsMap[modelId]; ok {
+		aiModel = decorateOpenAIModelMetadata(aiModel)
 		switch modelType {
 		case constant.ChannelTypeAnthropic:
 			c.JSON(200, dto.AnthropicModel{
@@ -284,4 +285,19 @@ func RetrieveModel(c *gin.Context, modelType int) {
 			"error": openAIError,
 		})
 	}
+}
+
+func decorateOpenAIModelMetadata(model dto.OpenAIModels) dto.OpenAIModels {
+	if model.ContextLength > 0 || model.MaxOutputTokens > 0 {
+		return model
+	}
+	switch model.Id {
+	case "deepseek-v4-pro":
+		model.ContextLength = 1_000_000
+		model.MaxOutputTokens = 65_536
+	case "deepseek-v4-flash":
+		model.ContextLength = 1_000_000
+		model.MaxOutputTokens = 65_536
+	}
+	return model
 }

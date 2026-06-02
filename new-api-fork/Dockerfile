@@ -34,6 +34,27 @@ RUN go mod download
 COPY . .
 COPY --from=builder /build/dist ./web/default/dist
 COPY --from=builder-classic /build/dist ./web/classic/dist
+RUN set -eux; \
+    for app in default classic; do \
+      html="./web/${app}/dist/index.html"; \
+      assets="./web/${app}/dist/assets"; \
+      [ -f "$html" ] || continue; \
+      [ -d "$assets" ] || continue; \
+      for file in "$assets"/*.js; do \
+        [ -f "$file" ] || continue; \
+        base="${file##*/}"; \
+        case "$base" in *-v56.js) continue ;; esac; \
+        cp "$file" "$assets/${base%.js}-v56.js"; \
+      done; \
+      for file in "$assets"/*.js; do \
+        [ -f "$file" ] || continue; \
+        base="${file##*/}"; \
+        case "$base" in *-v56.js) continue ;; esac; \
+        new_base="${base%.js}-v56.js"; \
+        sed -i "s#${base}#${new_base}#g" "$html"; \
+        find "$assets" -type f -name '*-v56.js' -exec sed -i "s#${base}#${new_base}#g" {} +; \
+      done; \
+    done
 RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
 
 FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a

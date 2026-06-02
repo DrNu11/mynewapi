@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/auth';
-import { getCardByCode, setCardStatus, setCardPool } from '@/lib/db';
+import { getCardByCode, setCardStatus, setCardPool, setCardNewApiUserId } from '@/lib/db';
 import { updateTokenStatus } from '@/lib/newapi';
 import { normalizeCode } from '@/lib/codes';
 
@@ -16,6 +16,7 @@ function unauthorized() {
  * Body 三种形态:
  *   { action: 'disable' | 'enable' }       — 启用/禁用卡密 + 联动 NewAPI token
  *   { action: 'set_pool', pool: string }   — 修改运营归属池(pool="" 清除)
+ *   { action: 'set_newapi_user_id', newapi_user_id: number | "" } — 设置/清除 NewAPI 用户归属
  *
  * 同时联动 NewAPI 的 token status:
  *   disable → cards.status='disabled' + NewAPI token status=2
@@ -30,7 +31,12 @@ export async function PATCH(
   if (!isAdminAuthenticated()) return unauthorized();
 
   const code = normalizeCode(params.code || '');
-  let body: { action?: string; pool?: string };
+  let body: {
+    action?: string;
+    pool?: string;
+    newapi_user_id?: number | string | null;
+    disable_reason?: string | null;
+  };
   try {
     body = await req.json();
   } catch {
@@ -38,9 +44,9 @@ export async function PATCH(
   }
 
   const action = body.action;
-  if (action !== 'disable' && action !== 'enable' && action !== 'set_pool') {
+  if (action !== 'disable' && action !== 'enable' && action !== 'set_pool' && action !== 'set_newapi_user_id') {
     return NextResponse.json(
-      { success: false, message: 'action 必须是 disable / enable / set_pool' },
+      { success: false, message: 'action 必须是 disable / enable / set_pool / set_newapi_user_id' },
       { status: 400 }
     );
   }
@@ -56,10 +62,24 @@ export async function PATCH(
     return NextResponse.json({ success: true, data: { card: updated } });
   }
 
+  // 设置 NewAPI 用户归属。未激活卡会在激活时按该用户创建 token;已激活卡只更新本地标注。
+  if (action === 'set_newapi_user_id') {
+    const raw = body.newapi_user_id;
+    const userId = raw === undefined || raw === null || raw === '' ? null : Number(raw);
+    if (userId !== null && (!Number.isInteger(userId) || userId <= 0)) {
+      return NextResponse.json({ success: false, message: 'NewAPI 用户 ID 必须是正整数' }, { status: 400 });
+    }
+    const updated = setCardNewApiUserId(code, userId);
+    const warning = card.newapi_token_id
+      ? '这张卡已激活,本次只更新 card 后台标注;NewAPI 既有 token 和历史日志不会迁移。'
+      : null;
+    return NextResponse.json({ success: true, data: { card: updated, warning } });
+  }
+
   // 联动 NewAPI token 状态(若已激活/绑定 token)
   if (card.newapi_token_id) {
     try {
-      await updateTokenStatus(card.newapi_token_id, action === 'disable' ? 2 : 1);
+      await updateTokenStatus(card.newapi_token_id, action === 'disable' ? 2 : 1, card.newapi_user_id);
     } catch (e: any) {
       console.error('[admin/cards] NewAPI token status update failed', e);
       return NextResponse.json(
@@ -70,6 +90,6 @@ export async function PATCH(
   }
 
   // 本地 cards.status 切换
-  const updated = setCardStatus(code, action);
+  const updated = setCardStatus(code, action, action === 'disable' ? body.disable_reason ?? null : null);
   return NextResponse.json({ success: true, data: { card: updated } });
 }

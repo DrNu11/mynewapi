@@ -25,6 +25,7 @@ logger = logging.getLogger("status-page.minimax")
 MINIMAX_API_ORIGIN = "https://www.minimaxi.com"
 MINIMAX_PLATFORM_ORIGIN = "https://platform.minimaxi.com"
 REMAINS_PATH = "/v1/api/openplatform/coding_plan/remains"
+RESOURCE_PACKAGE_PATH = "/backend/account/resource_package?page_num=1&page_size=20"
 CN_TZ = ZoneInfo("Asia/Shanghai")
 
 _cache_lock = threading.Lock()
@@ -165,6 +166,21 @@ def _format_remaining(ms: Any) -> str:
     return f"{minutes} 分钟后重置"
 
 
+def _format_datetime_ms(value: Any) -> str:
+    parsed = _parse_minimax_time(value)
+    if not parsed:
+        return ""
+    return parsed.astimezone(CN_TZ).strftime("%Y-%m-%d %H:%M:%S(UTC+8)")
+
+
+def _days_until_ms(value: Any) -> int | None:
+    parsed = _parse_minimax_time(value)
+    if not parsed:
+        return None
+    seconds = (parsed - datetime.now(timezone.utc)).total_seconds()
+    return max(0, int(seconds // 86400))
+
+
 def _normalize_quota(row: dict[str, Any], weekly: bool = False) -> dict[str, Any]:
     total_key = "current_weekly_total_count" if weekly else "current_interval_total_count"
     remaining_key = "current_weekly_usage_count" if weekly else "current_interval_usage_count"
@@ -174,8 +190,19 @@ def _normalize_quota(row: dict[str, Any], weekly: bool = False) -> dict[str, Any
 
     total = int(row.get(total_key) or 0)
     remaining = int(row.get(remaining_key) or 0)
-    used = max(0, total - remaining)
-    percent = round(used / total * 100) if total > 0 else 0
+    remaining_percent_key = "current_weekly_remaining_percent" if weekly else "current_interval_remaining_percent"
+    remaining_percent = row.get(remaining_percent_key)
+    if total > 0:
+        used = max(0, total - remaining)
+        percent = round(used / total * 100)
+    elif remaining_percent not in (None, ""):
+        total = 100
+        remaining = max(0, min(100, int(float(remaining_percent))))
+        used = max(0, 100 - remaining)
+        percent = used
+    else:
+        used = 0
+        percent = 0
     return {
         "total": total,
         "used": used,
@@ -203,15 +230,64 @@ def _pick_text_generation(remains: dict[str, Any]) -> dict[str, Any] | None:
         row = next((item for item in models if item.get("model_name") == "MiniMax-M*"), None)
         source = "model_remains"
     if row is None:
+        row = next((item for item in models if item.get("model_name") == "general"), None)
+        source = "model_remains"
+    if row is None:
         return None
 
-    weekly = _normalize_quota(row, weekly=True) if int(row.get("current_weekly_total_count") or 0) > 0 else None
+    weekly = (
+        _normalize_quota(row, weekly=True)
+        if int(row.get("current_weekly_total_count") or 0) > 0
+        or row.get("current_weekly_remaining_percent") not in (None, "")
+        else None
+    )
     return {
-        "title": row.get("display_name") or "文本生成",
+        "title": row.get("display_name") or ("文本生成" if row.get("model_name") == "general" else "文本生成"),
         "source": source,
         "raw_name": row.get("category") or row.get("model_name") or "",
         "five_hour": _normalize_quota(row, weekly=False),
         "weekly": weekly,
+    }
+
+
+def _pick_coding_package(resource_package: dict[str, Any]) -> dict[str, Any] | None:
+    data = resource_package.get("resource_package_data") or {}
+    details = data.get("resource_package_details") or []
+    if not isinstance(details, list) or not details:
+        return None
+
+    def score(item: dict[str, Any]) -> int:
+        name = str(item.get("package_name") or "").lower()
+        models = [str(model).lower() for model in item.get("models") or []]
+        points = 0
+        if "code" in name or "coding" in name:
+            points += 3
+        if any("coding-plan" in model or model == "minimax-m*" for model in models):
+            points += 2
+        if any("minimax-m2" in model or "minimax-m3" in model for model in models):
+            points += 1
+        return points
+
+    rows = [item for item in details if isinstance(item, dict)]
+    row = max(rows, key=score, default=None)
+    if not row:
+        return None
+    expiration_time = row.get("expiration_time")
+    effective_time = row.get("effective_time")
+    return {
+        "package_id": row.get("package_id") or "",
+        "package_name": row.get("package_name") or "",
+        "status": row.get("status"),
+        "effective_time": effective_time,
+        "expiration_time": expiration_time,
+        "effective_text": _format_datetime_ms(effective_time),
+        "expiration_text": _format_datetime_ms(expiration_time),
+        "days_remaining": _days_until_ms(expiration_time),
+        "total_count": row.get("total_count"),
+        "usage_count": row.get("usage_count"),
+        "remains_count": row.get("remains_count"),
+        "current_balance": data.get("current_balance"),
+        "near_expiry_balance": data.get("near_expiry_balance"),
     }
 
 
@@ -229,14 +305,17 @@ def _collect_account(plan: dict[str, str]) -> dict[str, Any]:
         "updated_at": _iso_now(),
         "latency_ms": None,
         "text_generation": None,
+        "package": None,
     }
     try:
         remains = _request_json(REMAINS_PATH, plan["cookie"], plan.get("group_id") or "")
         text_generation = _pick_text_generation(remains)
         if not text_generation:
             raise MiniMaxCollectError("schema_error", "MiniMax returned no text_generation quota")
+        package_payload = _request_json(RESOURCE_PACKAGE_PATH, plan["cookie"], plan.get("group_id") or "")
         item["ok"] = True
         item["text_generation"] = text_generation
+        item["package"] = _pick_coding_package(package_payload)
         item["base_resp"] = remains.get("base_resp")
     except MiniMaxCollectError as exc:
         _set_error(item, exc.error_type, exc.detail)
@@ -323,6 +402,16 @@ def _mock_account(idx: int) -> dict[str, Any]:
                 "time_range": "05/25 00:00 - 06/01 00:00(UTC+8)",
                 "reset_text": "3 天后重置",
             },
+        },
+        "package": {
+            "package_id": f"mock-{idx}",
+            "package_name": "codeplan",
+            "status": 1,
+            "effective_text": "2026-05-17 00:00:00(UTC+8)",
+            "expiration_text": "2026-06-16 23:59:59(UTC+8)",
+            "days_remaining": 18,
+            "current_balance": 600000,
+            "near_expiry_balance": 600000,
         },
     }
 

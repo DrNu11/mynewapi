@@ -228,15 +228,14 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		if maskedErr := maskMinimaxDeepSeekError(info, oaiError.Message, resp.StatusCode); maskedErr != nil {
+			return nil, maskedErr
+		}
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
 	if shouldRetryEmptyMinimaxDeepSeekResponse(info, &simpleResponse) {
-		return nil, types.WithOpenAIError(types.OpenAIError{
-			Message: "upstream returned empty content with finish_reason=length",
-			Type:    "upstream_error",
-			Code:    "empty_content_length",
-		}, http.StatusBadGateway)
+		return nil, minimaxContextWindowError()
 	}
 
 	// 严格伪装：把响应中的下游模型名替换为客户端原始请求模型名
@@ -246,6 +245,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			`"model":"`+info.UpstreamModelName+`"`,
 			`"model":"`+info.OriginModelName+`"`))
 	}
+	responseBody = []byte(maskGPTIdentityInData(string(responseBody), info))
 
 	for _, choice := range simpleResponse.Choices {
 		if choice.FinishReason == constant.FinishReasonContentFilter {
@@ -343,6 +343,73 @@ func shouldRetryEmptyMinimaxDeepSeekResponse(info *relaycommon.RelayInfo, respon
 		}
 	}
 	return true
+}
+
+func minimaxContextWindowError() *types.NewAPIError {
+	return types.WithOpenAIError(types.OpenAIError{
+		Message: "上下文过长,请新开窗口",
+		Type:    "invalid_request_error",
+		Code:    "context_window_exceeds_limit",
+	}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+}
+
+func minimaxRateLimitError(statusCode int) *types.NewAPIError {
+	if statusCode < 400 {
+		statusCode = http.StatusTooManyRequests
+	}
+	return types.WithOpenAIError(types.OpenAIError{
+		Message: "速率达到限制,请稍后重试",
+		Type:    "rate_limit_error",
+		Code:    "rate_limit_exceeded",
+	}, statusCode)
+}
+
+func minimaxGenericMaskedError(statusCode int) *types.NewAPIError {
+	if statusCode < 400 {
+		statusCode = http.StatusBadGateway
+	}
+	return types.WithOpenAIError(types.OpenAIError{
+		Message: "The model is temporarily unavailable. Please try again later.",
+		Type:    "upstream_error",
+		Code:    "upstream_error",
+	}, statusCode)
+}
+
+func maskMinimaxDeepSeekError(info *relaycommon.RelayInfo, message string, statusCode int) *types.NewAPIError {
+	if info == nil {
+		return nil
+	}
+	if !strings.HasPrefix(strings.ToLower(info.OriginModelName), "deepseek-v4-") {
+		return nil
+	}
+	if !strings.HasPrefix(strings.ToLower(info.UpstreamModelName), "minimax-") {
+		return nil
+	}
+	lowerMessage := strings.ToLower(message)
+	if strings.Contains(lowerMessage, "2013") ||
+		strings.Contains(lowerMessage, "context_window_exceeds_limit") ||
+		(strings.Contains(lowerMessage, "context") &&
+			(strings.Contains(lowerMessage, "exceed") || strings.Contains(lowerMessage, "limit"))) {
+		return minimaxContextWindowError()
+	}
+	if strings.Contains(lowerMessage, "429") ||
+		strings.Contains(lowerMessage, "too many requests") ||
+		strings.Contains(lowerMessage, "rate") ||
+		strings.Contains(lowerMessage, "quota") ||
+		strings.Contains(lowerMessage, "throttl") ||
+		strings.Contains(lowerMessage, "limit") ||
+		strings.Contains(lowerMessage, "5 hour") ||
+		strings.Contains(lowerMessage, "five hour") ||
+		strings.Contains(lowerMessage, "weekly") ||
+		strings.Contains(lowerMessage, "week") ||
+		strings.Contains(lowerMessage, "daily") ||
+		strings.Contains(lowerMessage, "周") ||
+		strings.Contains(lowerMessage, "小时") ||
+		strings.Contains(lowerMessage, "频率") ||
+		strings.Contains(lowerMessage, "额度") {
+		return minimaxRateLimitError(statusCode)
+	}
+	return minimaxGenericMaskedError(statusCode)
 }
 
 func streamTTSResponse(c *gin.Context, resp *http.Response) {

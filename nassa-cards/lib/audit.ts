@@ -35,7 +35,12 @@ export function audit(): Database.Database | null {
     auditDb = new Database(dbPath);
     auditDb.pragma('journal_mode = WAL');
     auditDb.pragma('synchronous = NORMAL');
-    initAuditSchema(auditDb);
+    const existing = auditDb
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'conversation_logs'")
+      .get();
+    if (!existing) {
+      initAuditSchema(auditDb);
+    }
     auditDbHealthy = true;
     return auditDb;
   } catch (err) {

@@ -192,6 +192,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
 			newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+			newApiErr = normalizeMinimaxDeepSeekError(info, newApiErr)
 			// reset status code 重置状态码
 			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 			return newApiErr
@@ -214,4 +215,62 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	}
 	return nil
+}
+
+func normalizeMinimaxDeepSeekError(info *relaycommon.RelayInfo, apiErr *types.NewAPIError) *types.NewAPIError {
+	if info == nil || apiErr == nil {
+		return apiErr
+	}
+	if !strings.HasPrefix(strings.ToLower(info.OriginModelName), "deepseek-v4-") {
+		return apiErr
+	}
+	if !strings.HasPrefix(strings.ToLower(info.UpstreamModelName), "minimax-") {
+		return apiErr
+	}
+	message := apiErr.ToOpenAIError().Message
+	lowerMessage := strings.ToLower(message)
+	if strings.Contains(lowerMessage, "2013") ||
+		strings.Contains(lowerMessage, "context_window_exceeds_limit") ||
+		(strings.Contains(lowerMessage, "context") &&
+			(strings.Contains(lowerMessage, "exceed") || strings.Contains(lowerMessage, "limit"))) {
+		return types.WithOpenAIError(types.OpenAIError{
+			Message: "上下文过长,请新开窗口",
+			Type:    "invalid_request_error",
+			Code:    "context_window_exceeds_limit",
+		}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if strings.Contains(lowerMessage, "429") ||
+		strings.Contains(lowerMessage, "too many requests") ||
+		strings.Contains(lowerMessage, "rate") ||
+		strings.Contains(lowerMessage, "quota") ||
+		strings.Contains(lowerMessage, "throttl") ||
+		strings.Contains(lowerMessage, "limit") ||
+		strings.Contains(lowerMessage, "5 hour") ||
+		strings.Contains(lowerMessage, "five hour") ||
+		strings.Contains(lowerMessage, "weekly") ||
+		strings.Contains(lowerMessage, "week") ||
+		strings.Contains(lowerMessage, "daily") ||
+		strings.Contains(lowerMessage, "周") ||
+		strings.Contains(lowerMessage, "小时") ||
+		strings.Contains(lowerMessage, "频率") ||
+		strings.Contains(lowerMessage, "额度") {
+		statusCode := apiErr.StatusCode
+		if statusCode < 400 {
+			statusCode = http.StatusTooManyRequests
+		}
+		return types.WithOpenAIError(types.OpenAIError{
+			Message: "速率达到限制,请稍后重试",
+			Type:    "rate_limit_error",
+			Code:    "rate_limit_exceeded",
+		}, statusCode)
+	}
+	statusCode := apiErr.StatusCode
+	if statusCode < 400 {
+		statusCode = http.StatusBadGateway
+	}
+	return types.WithOpenAIError(types.OpenAIError{
+		Message: "The model is temporarily unavailable. Please try again later.",
+		Type:    "upstream_error",
+		Code:    "upstream_error",
+	}, statusCode)
 }
