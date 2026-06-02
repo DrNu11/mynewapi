@@ -64,6 +64,32 @@ func fetchGroupData(ctx context.Context, client *http.Client, groupConfig map[st
 		Monitors:     []Monitor{},
 	}
 
+	if monitors, ok := groupConfig["monitors"].([]interface{}); ok {
+		for _, item := range monitors {
+			monitorMap, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := monitorMap["name"].(string)
+			if name == "" {
+				continue
+			}
+			group, _ := monitorMap["group"].(string)
+			statusFloat, _ := monitorMap["status"].(float64)
+			uptimeFloat, _ := monitorMap["uptime"].(float64)
+			status := int(statusFloat)
+			if status == 0 {
+				status = 1
+			}
+			result.Monitors = append(result.Monitors, Monitor{
+				Name:   name,
+				Group:  group,
+				Status: status,
+				Uptime: uptimeFloat,
+			})
+		}
+	}
+
 	if url == "" || slug == "" {
 		return result
 	}
