@@ -20,8 +20,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
 import { Markdown } from '@/components/ui/markdown'
 import { PublicLayout } from '@/components/layout'
-import { Footer } from '@/components/layout/components/footer'
-import { CTA, Features, Hero, HowItWorks, Stats } from './components'
+import { Features, Hero } from './components'
 import { useHomePageContent } from './hooks'
 
 export function Home() {
@@ -81,13 +80,25 @@ export function Home() {
         <main className='overflow-x-hidden'>
           <Hero isAuthenticated={isAuthenticated} />
           <Features />
-          <Stats />
-          <HowItWorks />
-          <CTA isAuthenticated={isAuthenticated} />
         </main>
-        <Footer />
+        <NassaFooter />
       </div>
     </PublicLayout>
+  )
+}
+
+function NassaFooter() {
+  return (
+    <footer className='relative z-10 border-t border-white/8 bg-[#000000] px-6 py-10 text-[#86868B]'>
+      <div className='mx-auto flex max-w-7xl flex-col gap-6 text-xs sm:flex-row sm:items-center sm:justify-between'>
+        <div className='flex items-center gap-3'>
+          <NassaLogo />
+          <span className='font-medium text-[#F5F5F7]'>NassaAPI</span>
+          <span>AI 接口中转站</span>
+        </div>
+        <p>© {new Date().getFullYear()} NassaAPI. All rights reserved.</p>
+      </div>
+    </footer>
   )
 }
 
