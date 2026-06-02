@@ -20,7 +20,8 @@ import { useEffect, useState } from 'react'
 import { getHomePageContent } from '../api'
 import type { HomePageContentResult } from '../types'
 
-const STORAGE_KEY = 'home_page_content'
+const LEGACY_STORAGE_KEY = 'home_page_content'
+const STORAGE_KEY = 'home_page_content_v2'
 
 /**
  * Hook to load and manage custom home page content
@@ -34,6 +35,8 @@ export function useHomePageContent(): HomePageContentResult {
     let mounted = true
 
     const loadContent = async () => {
+      localStorage.removeItem(LEGACY_STORAGE_KEY)
+
       // Load from localStorage first for immediate display
       const cached = localStorage.getItem(STORAGE_KEY)
       if (cached && mounted) {

@@ -43,8 +43,8 @@ RUN set -eux; \
         for file in "$assets"/*.js; do \
           [ -f "$file" ] || continue; \
           base="${file##*/}"; \
-          case "$base" in *-v58.js) continue ;; esac; \
-          new_base="${base%.js}-v58.js"; \
+          case "$base" in *-v59.js) continue ;; esac; \
+          new_base="${base%.js}-v59.js"; \
           cp "$file" "$assets/${new_base}"; \
           sed -i "s#${base}#${new_base}#g" "$html"; \
         done; \
