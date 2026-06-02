@@ -37,22 +37,17 @@ COPY --from=builder-classic /build/dist ./web/classic/dist
 RUN set -eux; \
     for app in default classic; do \
       html="./web/${app}/dist/index.html"; \
-      assets="./web/${app}/dist/assets"; \
       [ -f "$html" ] || continue; \
-      [ -d "$assets" ] || continue; \
-      for file in "$assets"/*.js; do \
-        [ -f "$file" ] || continue; \
-        base="${file##*/}"; \
-        case "$base" in *-v57.js) continue ;; esac; \
-        cp "$file" "$assets/${base%.js}-v57.js"; \
-      done; \
-      for file in "$assets"/*.js; do \
-        [ -f "$file" ] || continue; \
-        base="${file##*/}"; \
-        case "$base" in *-v57.js) continue ;; esac; \
-        new_base="${base%.js}-v57.js"; \
-        sed -i "s#${base}#${new_base}#g" "$html"; \
-        find "$assets" -type f -name '*-v57.js' -exec sed -i "s#${base}#${new_base}#g" {} +; \
+      for assets in "./web/${app}/dist/assets" "./web/${app}/dist/static/js"; do \
+        [ -d "$assets" ] || continue; \
+        for file in "$assets"/*.js; do \
+          [ -f "$file" ] || continue; \
+          base="${file##*/}"; \
+          case "$base" in *-v57.js) continue ;; esac; \
+          new_base="${base%.js}-v57.js"; \
+          cp "$file" "$assets/${new_base}"; \
+          sed -i "s#${base}#${new_base}#g" "$html"; \
+        done; \
       done; \
     done
 RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
