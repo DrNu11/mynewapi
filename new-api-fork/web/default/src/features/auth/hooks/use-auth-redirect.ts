@@ -20,8 +20,70 @@ import { useNavigate } from '@tanstack/react-router'
 import i18n from 'i18next'
 import { useAuthStore } from '@/stores/auth-store'
 import { getSelf } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
 import type { User } from '@/features/users/types'
 import { saveUserId } from '../lib/storage'
+
+const DEFAULT_AUTH_REDIRECT = '/dashboard'
+
+const ADMIN_ONLY_REDIRECT_PREFIXES = [
+  '/channels',
+  '/models',
+  '/redemption-codes',
+  '/subscriptions',
+  '/users',
+] as const
+
+const SUPER_ADMIN_ONLY_REDIRECT_PREFIXES = ['/system-settings'] as const
+
+function normalizeRedirectPath(redirectTo?: string): string {
+  if (!redirectTo) return DEFAULT_AUTH_REDIRECT
+
+  try {
+    const url = new URL(redirectTo, window.location.origin)
+    if (url.origin !== window.location.origin) {
+      return DEFAULT_AUTH_REDIRECT
+    }
+    return `${url.pathname}${url.search}${url.hash}`
+  } catch {
+    return redirectTo.startsWith('/') ? redirectTo : DEFAULT_AUTH_REDIRECT
+  }
+}
+
+export function getSafePostLoginRedirect(
+  redirectTo: string | undefined,
+  role?: number
+): string {
+  const targetPath = normalizeRedirectPath(redirectTo)
+  const pathname = targetPath.split(/[?#]/, 1)[0]
+
+  if (pathname === '/403') {
+    return DEFAULT_AUTH_REDIRECT
+  }
+
+  if ((role ?? ROLE.GUEST) < ROLE.ADMIN) {
+    if (
+      pathname === '/dashboard/users' ||
+      ADMIN_ONLY_REDIRECT_PREFIXES.some(
+        (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+      )
+    ) {
+      return DEFAULT_AUTH_REDIRECT
+    }
+  }
+
+  if ((role ?? ROLE.GUEST) < ROLE.SUPER_ADMIN) {
+    if (
+      SUPER_ADMIN_ONLY_REDIRECT_PREFIXES.some(
+        (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+      )
+    ) {
+      return DEFAULT_AUTH_REDIRECT
+    }
+  }
+
+  return targetPath
+}
 
 function getSavedLanguage(user: User): string | undefined {
   const userData = user as Record<string, unknown>
@@ -63,10 +125,12 @@ export function useAuthRedirect() {
     }
 
     // Fetch and set user data
+    let role: number | undefined
     try {
       const self = await getSelf()
       if (self?.success && self.data) {
         const user = self.data as User
+        role = user.role
         auth.setUser(user)
 
         // Update user ID if not already set
@@ -86,7 +150,7 @@ export function useAuthRedirect() {
     }
 
     // Navigate to target page
-    const targetPath = redirectTo || '/dashboard'
+    const targetPath = getSafePostLoginRedirect(redirectTo, role)
     navigate({ to: targetPath, replace: true })
   }
 
