@@ -240,6 +240,17 @@ func normalizeMinimaxDeepSeekError(info *relaycommon.RelayInfo, apiErr *types.Ne
 			Code:    "context_window_exceeds_limit",
 		}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
+	if isMinimaxDeepSeekMalformedUpstreamMessage(lowerMessage) {
+		statusCode := apiErr.StatusCode
+		if statusCode < 400 {
+			statusCode = http.StatusBadGateway
+		}
+		return types.WithOpenAIError(types.OpenAIError{
+			Message: "速率达到限制,请稍后重试",
+			Type:    "rate_limit_error",
+			Code:    "rate_limit_exceeded",
+		}, statusCode)
+	}
 	if strings.Contains(lowerMessage, "429") ||
 		strings.Contains(lowerMessage, "too many requests") ||
 		strings.Contains(lowerMessage, "rate") ||
@@ -274,4 +285,11 @@ func normalizeMinimaxDeepSeekError(info *relaycommon.RelayInfo, apiErr *types.Ne
 		Type:    "rate_limit_error",
 		Code:    "rate_limit_exceeded",
 	}, statusCode)
+}
+
+func isMinimaxDeepSeekMalformedUpstreamMessage(lowerMessage string) bool {
+	return strings.Contains(lowerMessage, "invalid character") ||
+		strings.Contains(lowerMessage, "looking for beginning of value") ||
+		strings.Contains(lowerMessage, "after object key:value pair") ||
+		strings.Contains(lowerMessage, "unknown error 999")
 }

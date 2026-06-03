@@ -36,6 +36,9 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
+		if maskedErr := maskMinimaxDeepSeekError(info, err.Error(), http.StatusBadGateway); maskedErr != nil {
+			return maskedErr
+		}
 		return err
 	}
 
@@ -224,6 +227,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	err = common.Unmarshal(responseBody, &simpleResponse)
 	if err != nil {
+		if maskedErr := maskMinimaxDeepSeekError(info, err.Error(), resp.StatusCode); maskedErr != nil {
+			return nil, maskedErr
+		}
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
@@ -392,6 +398,9 @@ func maskMinimaxDeepSeekError(info *relaycommon.RelayInfo, message string, statu
 			(strings.Contains(lowerMessage, "exceed") || strings.Contains(lowerMessage, "limit"))) {
 		return minimaxContextWindowError()
 	}
+	if isMinimaxDeepSeekMalformedUpstreamMessage(lowerMessage) {
+		return minimaxGenericMaskedError(statusCode)
+	}
 	if strings.Contains(lowerMessage, "429") ||
 		strings.Contains(lowerMessage, "too many requests") ||
 		strings.Contains(lowerMessage, "rate") ||
@@ -410,6 +419,13 @@ func maskMinimaxDeepSeekError(info *relaycommon.RelayInfo, message string, statu
 		return minimaxRateLimitError(statusCode)
 	}
 	return minimaxGenericMaskedError(statusCode)
+}
+
+func isMinimaxDeepSeekMalformedUpstreamMessage(lowerMessage string) bool {
+	return strings.Contains(lowerMessage, "invalid character") ||
+		strings.Contains(lowerMessage, "looking for beginning of value") ||
+		strings.Contains(lowerMessage, "after object key:value pair") ||
+		strings.Contains(lowerMessage, "unknown error 999")
 }
 
 func streamTTSResponse(c *gin.Context, resp *http.Response) {
