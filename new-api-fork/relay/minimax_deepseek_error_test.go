@@ -9,7 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
-func TestNormalizeMinimaxDeepSeekMalformedUpstreamErrors(t *testing.T) {
+func TestNormalizeMinimaxDeepSeekSpecificUpstreamErrors(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "deepseek-v4-pro",
 		ChannelMeta: &relaycommon.ChannelMeta{
@@ -17,17 +17,25 @@ func TestNormalizeMinimaxDeepSeekMalformedUpstreamErrors(t *testing.T) {
 		},
 	}
 
-	cases := []string{
-		"invalid character 'é' looking for beginning of value",
-		"invalid character ':' after object key:value pair",
-		"unknown error 999",
+	cases := []struct {
+		message    string
+		statusCode int
+		want       string
+	}{
+		{"invalid character 'é' looking for beginning of value", http.StatusBadGateway, "上游响应格式异常,请稍后重试"},
+		{"invalid character ':' after object key:value pair", http.StatusBadGateway, "上游响应格式异常,请稍后重试"},
+		{"unknown error 999", http.StatusInternalServerError, "上游返回未知错误999,请稍后重试"},
+		{"unknown error, 999 (1000)", http.StatusInternalServerError, "上游返回未知错误999,请稍后重试"},
+		{"当前服务集群负载较高，请稍后重试，感谢您的耐心等待。 (2064)", 529, "当前服务集群负载较高,请稍后重试"},
+		{"bad gateway", http.StatusBadGateway, "上游服务暂时不可用,请稍后重试"},
+		{"too many requests", http.StatusTooManyRequests, "请求频率过高,请稍后重试"},
 	}
 
-	for _, message := range cases {
-		apiErr := types.NewOpenAIError(errors.New(message), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	for _, tc := range cases {
+		apiErr := types.NewOpenAIError(errors.New(tc.message), types.ErrorCodeBadResponseBody, tc.statusCode)
 		got := normalizeMinimaxDeepSeekError(info, apiErr).ToOpenAIError()
-		if got.Message != "速率达到限制,请稍后重试" {
-			t.Fatalf("message %q normalized to %q", message, got.Message)
+		if got.Message != tc.want {
+			t.Fatalf("message %q normalized to %q, want %q", tc.message, got.Message, tc.want)
 		}
 	}
 }

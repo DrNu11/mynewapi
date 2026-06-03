@@ -370,17 +370,6 @@ func minimaxRateLimitError(statusCode int) *types.NewAPIError {
 	}, statusCode)
 }
 
-func minimaxGenericMaskedError(statusCode int) *types.NewAPIError {
-	if statusCode < 400 {
-		statusCode = http.StatusBadGateway
-	}
-	return types.WithOpenAIError(types.OpenAIError{
-		Message: "速率达到限制,请稍后重试",
-		Type:    "rate_limit_error",
-		Code:    "rate_limit_exceeded",
-	}, statusCode)
-}
-
 func maskMinimaxDeepSeekError(info *relaycommon.RelayInfo, message string, statusCode int) *types.NewAPIError {
 	if info == nil {
 		return nil
@@ -398,15 +387,50 @@ func maskMinimaxDeepSeekError(info *relaycommon.RelayInfo, message string, statu
 			(strings.Contains(lowerMessage, "exceed") || strings.Contains(lowerMessage, "limit"))) {
 		return minimaxContextWindowError()
 	}
-	if isMinimaxDeepSeekMalformedUpstreamMessage(lowerMessage) {
-		return minimaxGenericMaskedError(statusCode)
+	maskedMessage, errType, errCode, finalStatusCode, _ := classifyMinimaxDeepSeekError(lowerMessage, statusCode)
+	return types.WithOpenAIError(types.OpenAIError{
+		Message: maskedMessage,
+		Type:    errType,
+		Code:    errCode,
+	}, finalStatusCode)
+}
+
+func classifyMinimaxDeepSeekError(lowerMessage string, statusCode int) (message string, errType string, errCode string, finalStatusCode int, skipRetry bool) {
+	if statusCode < 400 {
+		statusCode = http.StatusBadGateway
 	}
-	if strings.Contains(lowerMessage, "429") ||
+	if strings.Contains(lowerMessage, "2013") ||
+		strings.Contains(lowerMessage, "context_window_exceeds_limit") ||
+		(strings.Contains(lowerMessage, "context") &&
+			(strings.Contains(lowerMessage, "exceed") || strings.Contains(lowerMessage, "limit"))) {
+		return "上下文过长,请新开窗口", "invalid_request_error", "context_window_exceeds_limit", http.StatusBadRequest, true
+	}
+	if (strings.Contains(lowerMessage, "unknown error") && strings.Contains(lowerMessage, "999")) ||
+		strings.Contains(lowerMessage, "unknown error 999") {
+		return "上游返回未知错误999,请稍后重试", "upstream_error", "upstream_unknown_999", statusCode, false
+	}
+	if strings.Contains(lowerMessage, "2064") || statusCode == http.StatusTooManyRequests+100 {
+		return "当前服务集群负载较高,请稍后重试", "rate_limit_error", "upstream_cluster_overloaded", statusCode, false
+	}
+	if strings.Contains(lowerMessage, "invalid character") ||
+		strings.Contains(lowerMessage, "looking for beginning of value") ||
+		strings.Contains(lowerMessage, "after object key:value pair") {
+		return "上游响应格式异常,请稍后重试", "upstream_error", "bad_upstream_response", statusCode, false
+	}
+	if statusCode == http.StatusBadGateway || statusCode == http.StatusServiceUnavailable ||
+		strings.Contains(lowerMessage, "temporarily unavailable") ||
+		strings.Contains(lowerMessage, "bad gateway") {
+		return "上游服务暂时不可用,请稍后重试", "upstream_error", "upstream_unavailable", statusCode, false
+	}
+	if statusCode == http.StatusTooManyRequests ||
+		strings.Contains(lowerMessage, "429") ||
 		strings.Contains(lowerMessage, "too many requests") ||
 		strings.Contains(lowerMessage, "rate") ||
-		strings.Contains(lowerMessage, "quota") ||
 		strings.Contains(lowerMessage, "throttl") ||
-		strings.Contains(lowerMessage, "limit") ||
+		strings.Contains(lowerMessage, "频率") {
+		return "请求频率过高,请稍后重试", "rate_limit_error", "rate_limit_exceeded", http.StatusTooManyRequests, false
+	}
+	if strings.Contains(lowerMessage, "quota") ||
 		strings.Contains(lowerMessage, "5 hour") ||
 		strings.Contains(lowerMessage, "five hour") ||
 		strings.Contains(lowerMessage, "weekly") ||
@@ -414,18 +438,11 @@ func maskMinimaxDeepSeekError(info *relaycommon.RelayInfo, message string, statu
 		strings.Contains(lowerMessage, "daily") ||
 		strings.Contains(lowerMessage, "周") ||
 		strings.Contains(lowerMessage, "小时") ||
-		strings.Contains(lowerMessage, "频率") ||
-		strings.Contains(lowerMessage, "额度") {
-		return minimaxRateLimitError(statusCode)
+		strings.Contains(lowerMessage, "额度") ||
+		strings.Contains(lowerMessage, "limit") {
+		return "上游额度或频率达到限制,请稍后重试", "rate_limit_error", "quota_or_rate_limited", http.StatusTooManyRequests, false
 	}
-	return minimaxGenericMaskedError(statusCode)
-}
-
-func isMinimaxDeepSeekMalformedUpstreamMessage(lowerMessage string) bool {
-	return strings.Contains(lowerMessage, "invalid character") ||
-		strings.Contains(lowerMessage, "looking for beginning of value") ||
-		strings.Contains(lowerMessage, "after object key:value pair") ||
-		strings.Contains(lowerMessage, "unknown error 999")
+	return "上游服务异常,请稍后重试", "upstream_error", "upstream_error", statusCode, false
 }
 
 func streamTTSResponse(c *gin.Context, resp *http.Response) {

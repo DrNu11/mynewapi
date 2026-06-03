@@ -67,7 +67,7 @@ func TestShouldRetryEmptyMinimaxDeepSeekResponseSkipsOtherUpstreams(t *testing.T
 	}
 }
 
-func TestMaskMinimaxDeepSeekMalformedUpstreamErrors(t *testing.T) {
+func TestMaskMinimaxDeepSeekSpecificUpstreamErrors(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "deepseek-v4-pro",
 		ChannelMeta: &relaycommon.ChannelMeta{
@@ -75,19 +75,27 @@ func TestMaskMinimaxDeepSeekMalformedUpstreamErrors(t *testing.T) {
 		},
 	}
 
-	cases := []string{
-		"invalid character 'é' looking for beginning of value",
-		"invalid character ':' after object key:value pair",
-		"unknown error 999",
+	cases := []struct {
+		message    string
+		statusCode int
+		want       string
+	}{
+		{"invalid character 'é' looking for beginning of value", 502, "上游响应格式异常,请稍后重试"},
+		{"invalid character ':' after object key:value pair", 502, "上游响应格式异常,请稍后重试"},
+		{"unknown error 999", 500, "上游返回未知错误999,请稍后重试"},
+		{"unknown error, 999 (1000)", 500, "上游返回未知错误999,请稍后重试"},
+		{"当前服务集群负载较高，请稍后重试，感谢您的耐心等待。 (2064)", 529, "当前服务集群负载较高,请稍后重试"},
+		{"bad gateway", 502, "上游服务暂时不可用,请稍后重试"},
+		{"too many requests", 429, "请求频率过高,请稍后重试"},
 	}
 
-	for _, message := range cases {
-		got := maskMinimaxDeepSeekError(info, message, 500)
+	for _, tc := range cases {
+		got := maskMinimaxDeepSeekError(info, tc.message, tc.statusCode)
 		if got == nil {
-			t.Fatalf("message %q was not masked", message)
+			t.Fatalf("message %q was not masked", tc.message)
 		}
-		if got.ToOpenAIError().Message != "速率达到限制,请稍后重试" {
-			t.Fatalf("message %q normalized to %q", message, got.ToOpenAIError().Message)
+		if got.ToOpenAIError().Message != tc.want {
+			t.Fatalf("message %q normalized to %q, want %q", tc.message, got.ToOpenAIError().Message, tc.want)
 		}
 	}
 }
