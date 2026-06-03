@@ -128,6 +128,22 @@ def _should_bridge_model(model: Any) -> bool:
     return isinstance(model, str) and model.startswith(VISION_BRIDGE_MODEL_PREFIXES)
 
 
+def _is_chat_endpoint(endpoint: str) -> bool:
+    return endpoint == "/v1/chat/completions"
+
+
+def _is_responses_endpoint(endpoint: str) -> bool:
+    return endpoint == "/v1/responses"
+
+
+def _is_claude_messages_endpoint(endpoint: str) -> bool:
+    return endpoint in {"/v1/messages", "/anthropic/v1/messages"}
+
+
+def _is_context_compress_endpoint(endpoint: str) -> bool:
+    return _is_chat_endpoint(endpoint) or _is_responses_endpoint(endpoint) or _is_claude_messages_endpoint(endpoint)
+
+
 def _provider_model_map() -> dict[str, str]:
     try:
         data = json.loads(PROVIDER_MODEL_MAP_JSON)
@@ -465,11 +481,46 @@ def _compact_responses_body_for_context(body: dict[str, Any]) -> tuple[dict[str,
     return patched, True
 
 
+def _compact_claude_body_for_context(body: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body, False
+    keep_recent = max(2, CONTEXT_COMPRESS_KEEP_RECENT_MESSAGES)
+    if len(messages) <= keep_recent + 1:
+        return body, False
+
+    old_messages = messages[:-keep_recent]
+    recent_messages = messages[-keep_recent:]
+    role_texts: list[tuple[str, str]] = []
+    for message in old_messages:
+        if not isinstance(message, dict):
+            continue
+        text = _content_to_text(message.get("content"))
+        if text:
+            role_texts.append((str(message.get("role") or "message"), text))
+    if not role_texts:
+        return body, False
+
+    patched = json.loads(json.dumps(body))
+    system = patched.get("system")
+    summary = _make_history_summary(role_texts)
+    if isinstance(system, str):
+        patched["system"] = f"{system}\n\n{summary}" if system else summary
+    elif isinstance(system, list):
+        patched["system"] = [{"type": "text", "text": summary}, *system]
+    else:
+        patched["system"] = summary
+    patched["messages"] = recent_messages
+    return patched, True
+
+
 def _compact_body_for_context(body: dict[str, Any], endpoint: str) -> tuple[dict[str, Any], bool]:
-    if endpoint == "/v1/chat/completions":
+    if _is_chat_endpoint(endpoint):
         return _compact_chat_body_for_context(body)
-    if endpoint == "/v1/responses":
+    if _is_responses_endpoint(endpoint):
         return _compact_responses_body_for_context(body)
+    if _is_claude_messages_endpoint(endpoint):
+        return _compact_claude_body_for_context(body)
     return body, False
 
 
@@ -595,8 +646,8 @@ async def _call_vlm(client: httpx.AsyncClient, prompt: str, image_url: str, api_
 
 
 async def _bridge_images(body: dict[str, Any], endpoint: str, vlm_api_key: str = "") -> tuple[dict[str, Any], bool]:
-    is_chat = endpoint == "/v1/chat/completions"
-    is_responses = endpoint == "/v1/responses"
+    is_chat = _is_chat_endpoint(endpoint)
+    is_responses = _is_responses_endpoint(endpoint)
     if not _should_bridge_model(body.get("model")) or not (is_chat or is_responses):
         return body, False
     images, prompt_text = _collect_chat_images(body) if is_chat else _collect_responses_images(body)
@@ -656,16 +707,16 @@ async def _proxy(request: Request, path: str) -> Response:
     endpoint = "/" + path
     origin_model = ""
     request_payload: dict[str, Any] | None = None
-    if request.method.upper() == "POST" and endpoint in {"/v1/chat/completions", "/v1/responses"}:
+    if request.method.upper() == "POST" and _is_context_compress_endpoint(endpoint):
         try:
             parsed = json.loads(raw_body.decode("utf-8")) if raw_body else {}
             if isinstance(parsed, dict):
                 origin_model = _origin_model_for_mask(parsed.get("model"))
                 vlm_api_key = _request_bearer_token(request) if BRIDGE_MODE == "provider" else ""
-                patched, bridged = await _bridge_images(parsed, endpoint, vlm_api_key)
+                patched, bridged = await _bridge_images(parsed, endpoint, vlm_api_key) if not _is_claude_messages_endpoint(endpoint) else (parsed, False)
                 if _should_force_context_compress(request):
                     patched, context_compressed = _compact_body_for_context(patched, endpoint)
-                if BRIDGE_MODE == "provider":
+                if BRIDGE_MODE == "provider" and not _is_claude_messages_endpoint(endpoint):
                     patched = _map_provider_model(patched)
                 request_payload = patched
                 if bridged:
@@ -718,7 +769,7 @@ async def _proxy(request: Request, path: str) -> Response:
         BRIDGE_MODE == "provider"
         and _is_deepseek_model(origin_model)
         and request.method.upper() == "POST"
-        and endpoint in {"/v1/chat/completions", "/v1/responses"}
+        and _is_context_compress_endpoint(endpoint)
         and upstream.status_code >= 400
     ):
         first_error_body = await upstream.aread()
