@@ -30,9 +30,15 @@ MAX_IMAGES = int(os.getenv("VISION_BRIDGE_MAX_IMAGES", "4"))
 IMAGE_MAX_BYTES = int(os.getenv("VISION_BRIDGE_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
 PROVIDER_UPSTREAM_MAX_ATTEMPTS = int(os.getenv("PROVIDER_UPSTREAM_MAX_ATTEMPTS", "3"))
 PROVIDER_RETRY_BASE_DELAY_SECONDS = float(os.getenv("PROVIDER_RETRY_BASE_DELAY_SECONDS", "0.6"))
+PROVIDER_CONTEXT_COMPRESSION = os.getenv("PROVIDER_CONTEXT_COMPRESSION", "auto").strip().lower()
+CONTEXT_COMPRESS_KEEP_RECENT_MESSAGES = int(os.getenv("CONTEXT_COMPRESS_KEEP_RECENT_MESSAGES", "8"))
+CONTEXT_COMPRESS_HISTORY_CHARS = int(os.getenv("CONTEXT_COMPRESS_HISTORY_CHARS", "24000"))
+CONTEXT_COMPRESS_MESSAGE_CHARS = int(os.getenv("CONTEXT_COMPRESS_MESSAGE_CHARS", "2500"))
 
 IDENTITY_TAIL_CHARS = 64
 PROVIDER_RETRY_STATUSES = {500, 502, 503, 504}
+CONTEXT_LIMIT_MESSAGE = "上下文过长,请新开窗口"
+RATE_LIMIT_MESSAGE = "速率达到限制,请稍后重试"
 
 HOP_BY_HOP = {
     "connection",
@@ -202,6 +208,102 @@ def _mask_provider_identity_text(text: str, origin_model: str) -> str:
     return text
 
 
+def _provider_error_category(text: str, origin_model: str) -> str:
+    if not origin_model or not _is_deepseek_model(origin_model) or not text:
+        return ""
+    lower_text = text.lower()
+    if (
+        "2013" in lower_text
+        or "context_window_exceeds_limit" in lower_text
+        or "context window exceeds limit" in lower_text
+        or "context length" in lower_text
+        or "maximum context" in lower_text
+        or "too many tokens" in lower_text
+        or ("context" in lower_text and ("exceed" in lower_text or "limit" in lower_text))
+    ):
+        return "context"
+    if (
+        "429" in lower_text
+        or "too many requests" in lower_text
+        or "rate" in lower_text
+        or "quota" in lower_text
+        or "throttl" in lower_text
+        or "5 hour" in lower_text
+        or "five hour" in lower_text
+        or "weekly" in lower_text
+        or "week" in lower_text
+        or "daily" in lower_text
+        or "周" in lower_text
+        or "小时" in lower_text
+        or "频率" in lower_text
+        or "额度" in lower_text
+    ):
+        return "rate"
+    return ""
+
+
+def _masked_error_payload(category: str) -> dict[str, Any]:
+    if category == "context":
+        return {
+            "error": {
+                "message": CONTEXT_LIMIT_MESSAGE,
+                "type": "invalid_request_error",
+                "code": "context_window_exceeds_limit",
+            }
+        }
+    return {
+        "error": {
+            "message": RATE_LIMIT_MESSAGE,
+            "type": "rate_limit_error",
+            "code": "rate_limit_exceeded",
+        }
+    }
+
+
+def _mask_error_json_value(value: Any, category: str) -> Any:
+    if isinstance(value, dict):
+        masked = dict(value)
+        payload = _masked_error_payload(category)["error"]
+        if isinstance(masked.get("error"), dict):
+            err = dict(masked["error"])
+            err.update(payload)
+            masked["error"] = err
+        elif "error" in masked:
+            masked["error"] = payload
+        for key in ("message", "msg", "err", "error_msg", "detail"):
+            if key in masked and isinstance(masked[key], str):
+                masked[key] = payload["message"]
+        return masked
+    return _masked_error_payload(category)
+
+
+def _mask_provider_error_text(text: str, origin_model: str) -> str:
+    category = _provider_error_category(text, origin_model)
+    if not category:
+        return text
+
+    # OpenAI-compatible SSE error frames commonly arrive as `data: {...}`.
+    if any(line.startswith("data:") for line in text.splitlines()):
+        prefix_lines: list[str] = []
+        for line in text.splitlines():
+            if line.startswith("event:"):
+                prefix_lines.append("event: error")
+                break
+        payload = json.dumps(_masked_error_payload(category), ensure_ascii=False, separators=(",", ":"))
+        return "\n".join([*prefix_lines, f"data: {payload}", ""])
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return CONTEXT_LIMIT_MESSAGE if category == "context" else RATE_LIMIT_MESSAGE
+    return json.dumps(_mask_error_json_value(data, category), ensure_ascii=False, separators=(",", ":"))
+
+
+def _mask_provider_output_text(text: str, origin_model: str) -> str:
+    text = _mask_provider_identity_text(text, origin_model)
+    return _mask_provider_error_text(text, origin_model)
+
+
 def _mask_provider_identity_bytes(data: bytes, origin_model: str) -> bytes:
     if not origin_model or not _is_deepseek_model(origin_model) or not data:
         return data
@@ -209,7 +311,7 @@ def _mask_provider_identity_bytes(data: bytes, origin_model: str) -> bytes:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return data
-    return _mask_provider_identity_text(text, origin_model).encode("utf-8")
+    return _mask_provider_output_text(text, origin_model).encode("utf-8")
 
 
 def _extract_image_url(part: Any) -> str | None:
@@ -237,6 +339,138 @@ def _text_from_part(part: Any) -> str:
     if isinstance(text, str):
         return text
     return ""
+
+
+def _content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts: list[str] = []
+        for part in content:
+            text = _text_from_part(part)
+            if text:
+                texts.append(text)
+        return "\n".join(texts)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _compact_text(text: str, limit: int) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    head = max(0, limit // 3)
+    tail = max(0, limit - head)
+    return f"{text[:head]} ... {text[-tail:]}"
+
+
+def _context_compress_header(request: Request) -> str:
+    return (
+        request.headers.get("x-nassa-context-compress")
+        or request.headers.get("x-context-compress")
+        or ""
+    ).strip().lower()
+
+
+def _should_force_context_compress(request: Request) -> bool:
+    return _context_compress_header(request) in {"1", "true", "yes", "manual", "force", "on"}
+
+
+def _should_auto_context_compress() -> bool:
+    return PROVIDER_CONTEXT_COMPRESSION in {"1", "true", "yes", "auto", "on"}
+
+
+def _make_history_summary(role_texts: list[tuple[str, str]]) -> str:
+    lines: list[str] = []
+    for idx, (role, text) in enumerate(role_texts, start=1):
+        compact = _compact_text(text, CONTEXT_COMPRESS_MESSAGE_CHARS)
+        if compact:
+            lines.append(f"{idx}. {role}: {compact}")
+    summary = "\n".join(lines)
+    if len(summary) > CONTEXT_COMPRESS_HISTORY_CHARS:
+        summary = summary[-CONTEXT_COMPRESS_HISTORY_CHARS:]
+    return (
+        "以下是前文对话的压缩记录。请把它当作已发生的上下文事实使用,但优先遵循后续最新消息。\n"
+        f"{summary}"
+    )
+
+
+def _compact_chat_body_for_context(body: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body, False
+    keep_recent = max(2, CONTEXT_COMPRESS_KEEP_RECENT_MESSAGES)
+    if len(messages) <= keep_recent + 2:
+        return body, False
+
+    leading: list[Any] = []
+    rest = list(messages)
+    while rest and isinstance(rest[0], dict) and rest[0].get("role") in {"system", "developer"}:
+        leading.append(rest.pop(0))
+
+    if len(rest) <= keep_recent + 1:
+        return body, False
+
+    old_messages = rest[:-keep_recent]
+    recent_messages = rest[-keep_recent:]
+    role_texts: list[tuple[str, str]] = []
+    for message in old_messages:
+        if not isinstance(message, dict):
+            continue
+        text = _content_to_text(message.get("content"))
+        if text:
+            role_texts.append((str(message.get("role") or "message"), text))
+    if not role_texts:
+        return body, False
+
+    patched = json.loads(json.dumps(body))
+    summary_message = {"role": "system", "content": _make_history_summary(role_texts)}
+    patched["messages"] = [*leading, summary_message, *recent_messages]
+    return patched, True
+
+
+def _compact_responses_body_for_context(body: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    input_value = body.get("input")
+    keep_recent = max(2, CONTEXT_COMPRESS_KEEP_RECENT_MESSAGES)
+    if isinstance(input_value, str):
+        if len(input_value) <= CONTEXT_COMPRESS_HISTORY_CHARS:
+            return body, False
+        patched = json.loads(json.dumps(body))
+        patched["input"] = _make_history_summary([("input", input_value)])
+        return patched, True
+    if not isinstance(input_value, list) or len(input_value) <= keep_recent + 1:
+        return body, False
+
+    old_items = input_value[:-keep_recent]
+    recent_items = input_value[-keep_recent:]
+    role_texts: list[tuple[str, str]] = []
+    for item in old_items:
+        if isinstance(item, str):
+            role_texts.append(("input", item))
+            continue
+        if not isinstance(item, dict):
+            continue
+        text = _content_to_text(item.get("content"))
+        if text:
+            role_texts.append((str(item.get("role") or "input"), text))
+    if not role_texts:
+        return body, False
+
+    patched = json.loads(json.dumps(body))
+    patched["input"] = [
+        {"role": "system", "content": [{"type": "input_text", "text": _make_history_summary(role_texts)}]},
+        *recent_items,
+    ]
+    return patched, True
+
+
+def _compact_body_for_context(body: dict[str, Any], endpoint: str) -> tuple[dict[str, Any], bool]:
+    if endpoint == "/v1/chat/completions":
+        return _compact_chat_body_for_context(body)
+    if endpoint == "/v1/responses":
+        return _compact_responses_body_for_context(body)
+    return body, False
 
 
 def _append_text_content(content: Any, text: str, responses: bool = False) -> Any:
@@ -418,8 +652,10 @@ async def _proxy(request: Request, path: str) -> Response:
         return Response(status_code=499)
     body = raw_body
     bridged = False
+    context_compressed = False
     endpoint = "/" + path
     origin_model = ""
+    request_payload: dict[str, Any] | None = None
     if request.method.upper() == "POST" and endpoint in {"/v1/chat/completions", "/v1/responses"}:
         try:
             parsed = json.loads(raw_body.decode("utf-8")) if raw_body else {}
@@ -427,11 +663,16 @@ async def _proxy(request: Request, path: str) -> Response:
                 origin_model = _origin_model_for_mask(parsed.get("model"))
                 vlm_api_key = _request_bearer_token(request) if BRIDGE_MODE == "provider" else ""
                 patched, bridged = await _bridge_images(parsed, endpoint, vlm_api_key)
+                if _should_force_context_compress(request):
+                    patched, context_compressed = _compact_body_for_context(patched, endpoint)
                 if BRIDGE_MODE == "provider":
                     patched = _map_provider_model(patched)
+                request_payload = patched
                 if bridged:
                     body = json.dumps(patched, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                 elif BRIDGE_MODE == "provider" and patched is not parsed:
+                    body = json.dumps(patched, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                elif context_compressed:
                     body = json.dumps(patched, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         except Exception as exc:
             return _json_error(502, f"图片理解桥接失败: {exc}", "vision_bridge_failed")
@@ -473,6 +714,50 @@ async def _proxy(request: Request, path: str) -> Response:
         await client.aclose()
         return _json_error(502, "上游服务无法访问", "service_unavailable")
 
+    if (
+        BRIDGE_MODE == "provider"
+        and _is_deepseek_model(origin_model)
+        and request.method.upper() == "POST"
+        and endpoint in {"/v1/chat/completions", "/v1/responses"}
+        and upstream.status_code >= 400
+    ):
+        first_error_body = await upstream.aread()
+        error_text = first_error_body.decode("utf-8", errors="replace")
+        error_category = _provider_error_category(error_text, origin_model)
+        reused_error_body = first_error_body
+        can_auto_retry = (
+            error_category == "context"
+            and _should_auto_context_compress()
+            and not context_compressed
+            and request_payload is not None
+        )
+        if can_auto_retry:
+            compacted_payload, context_compressed = _compact_body_for_context(request_payload, endpoint)
+            if context_compressed:
+                compacted_body = json.dumps(compacted_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                retry_headers = _forward_headers(request, len(compacted_body))
+                await upstream.aclose()
+                retry_req = client.build_request(request.method, upstream_url, headers=retry_headers, content=compacted_body)
+                upstream = await client.send(retry_req, stream=True)
+                body = compacted_body
+                reused_error_body = b""
+
+        if upstream.status_code >= 400:
+            error_body = reused_error_body or await upstream.aread()
+            masked = _mask_provider_output_text(error_body.decode("utf-8", errors="replace"), origin_model).encode("utf-8")
+            resp_headers = _response_headers(upstream.headers)
+            if context_compressed:
+                resp_headers["x-nassa-context-compress"] = "auto"
+            resp_headers["x-nassa-identity-mask"] = "deepseek"
+            await upstream.aclose()
+            await client.aclose()
+            return Response(
+                content=masked,
+                status_code=upstream.status_code,
+                headers=resp_headers,
+                media_type=upstream.headers.get("content-type"),
+            )
+
     async def body_iter():
         decoder = codecs.getincrementaldecoder("utf-8")()
         pending_text = ""
@@ -488,7 +773,7 @@ async def _proxy(request: Request, path: str) -> Response:
                         pending_text += decoder.decode(chunk)
                     except UnicodeDecodeError:
                         if pending_text:
-                            yield _mask_provider_identity_text(pending_text, origin_model).encode("utf-8")
+                            yield _mask_provider_output_text(pending_text, origin_model).encode("utf-8")
                             pending_text = ""
                         yield chunk
                         continue
@@ -498,14 +783,14 @@ async def _proxy(request: Request, path: str) -> Response:
                             frame, pending_text = pending_text.split("\n\n", 1)
                             if "[DONE]" in frame:
                                 sent_done = True
-                            yield _mask_provider_identity_text(frame + "\n\n", origin_model).encode("utf-8")
+                            yield _mask_provider_output_text(frame + "\n\n", origin_model).encode("utf-8")
                         continue
 
                     if len(pending_text) <= IDENTITY_TAIL_CHARS:
                         continue
                     safe_text = pending_text[:-IDENTITY_TAIL_CHARS]
                     pending_text = pending_text[-IDENTITY_TAIL_CHARS:]
-                    yield _mask_provider_identity_text(safe_text, origin_model).encode("utf-8")
+                    yield _mask_provider_output_text(safe_text, origin_model).encode("utf-8")
             except Exception as exc:
                 print(f"[provider-stream] upstream stream interrupted: {exc}", flush=True)
 
@@ -516,7 +801,7 @@ async def _proxy(request: Request, path: str) -> Response:
                         frame, pending_text = pending_text.split("\n\n", 1)
                         if "[DONE]" in frame:
                             sent_done = True
-                        yield _mask_provider_identity_text(frame + "\n\n", origin_model).encode("utf-8")
+                        yield _mask_provider_output_text(frame + "\n\n", origin_model).encode("utf-8")
                     if pending_text.strip():
                         print(
                             f"[provider-stream] dropped incomplete SSE tail bytes={len(pending_text.encode('utf-8', errors='ignore'))}",
@@ -525,7 +810,7 @@ async def _proxy(request: Request, path: str) -> Response:
                     if not sent_done:
                         yield b"data: [DONE]\n\n"
                 elif pending_text:
-                    yield _mask_provider_identity_text(pending_text, origin_model).encode("utf-8")
+                    yield _mask_provider_output_text(pending_text, origin_model).encode("utf-8")
         finally:
             await upstream.aclose()
             await client.aclose()
@@ -533,6 +818,8 @@ async def _proxy(request: Request, path: str) -> Response:
     resp_headers = _response_headers(upstream.headers)
     if bridged:
         resp_headers["x-nassa-vision-bridge"] = "minimax-vlm"
+    if context_compressed:
+        resp_headers["x-nassa-context-compress"] = "auto"
     if BRIDGE_MODE == "provider" and _is_deepseek_model(origin_model):
         resp_headers["x-nassa-identity-mask"] = "deepseek"
     return StreamingResponse(
