@@ -280,9 +280,9 @@ func normalizeMinimaxDeepSeekError(info *relaycommon.RelayInfo, apiErr *types.Ne
 		statusCode = http.StatusBadGateway
 	}
 	return types.WithOpenAIError(types.OpenAIError{
-		Message: "The model is temporarily unavailable. Please try again later.",
-		Type:    "upstream_error",
-		Code:    "upstream_error",
+		Message: "速率达到限制,请稍后重试",
+		Type:    "rate_limit_error",
+		Code:    "rate_limit_exceeded",
 	}, statusCode)
 }
 
