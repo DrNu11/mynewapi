@@ -225,6 +225,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			return
 		}
 
+		newAPIError = relay.NormalizeMinimaxDeepSeekError(relayInfo, newAPIError)
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 

@@ -192,7 +192,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
 			newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
-			newApiErr = normalizeMinimaxDeepSeekError(info, newApiErr)
+			newApiErr = NormalizeMinimaxDeepSeekError(info, newApiErr)
 			// reset status code 重置状态码
 			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 			return newApiErr
@@ -217,7 +217,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	return nil
 }
 
-func normalizeMinimaxDeepSeekError(info *relaycommon.RelayInfo, apiErr *types.NewAPIError) *types.NewAPIError {
+func NormalizeMinimaxDeepSeekError(info *relaycommon.RelayInfo, apiErr *types.NewAPIError) *types.NewAPIError {
 	if info == nil || apiErr == nil {
 		return apiErr
 	}
