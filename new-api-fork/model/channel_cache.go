@@ -94,9 +94,13 @@ func SyncChannelCache(frequency int) {
 }
 
 func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel, error) {
+	return GetRandomSatisfiedChannelExcluding(group, model, retry, nil)
+}
+
+func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, excludedChannelIds map[int]bool) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry)
+		return GetChannelExcluding(group, model, retry, excludedChannelIds)
 	}
 
 	channelSyncLock.RLock()
@@ -142,21 +146,37 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	targetPriority := int64(sortedUniquePriorities[retry])
 
 	// get the priority for the given retry number
-	var sumWeight = 0
-	var targetChannels []*Channel
+	var allTargetChannels []*Channel
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
 			if channel.GetPriority() == targetPriority {
-				sumWeight += channel.GetWeight()
-				targetChannels = append(targetChannels, channel)
+				allTargetChannels = append(allTargetChannels, channel)
 			}
 		} else {
 			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
 		}
 	}
 
-	if len(targetChannels) == 0 {
+	if len(allTargetChannels) == 0 {
 		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
+	}
+
+	targetChannels := allTargetChannels
+	if len(allTargetChannels) > 1 && len(excludedChannelIds) > 0 {
+		filteredChannels := make([]*Channel, 0, len(allTargetChannels))
+		for _, channel := range allTargetChannels {
+			if !excludedChannelIds[channel.Id] {
+				filteredChannels = append(filteredChannels, channel)
+			}
+		}
+		if len(filteredChannels) > 0 {
+			targetChannels = filteredChannels
+		}
+	}
+
+	var sumWeight = 0
+	for _, channel := range targetChannels {
+		sumWeight += channel.GetWeight()
 	}
 
 	// smoothing factor and adjustment
