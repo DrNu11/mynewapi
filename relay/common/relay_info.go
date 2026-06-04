@@ -25,6 +25,17 @@ type ThinkingContentInfo struct {
 	IsFirstThinkingContent  bool
 	SendLastThinkingContent bool
 	HasSentThinkingContent  bool
+
+	// State for ContentThinkToReasoning (extracting inline <think> from content).
+	ContentThinkInThink bool   // currently inside a <think>...</think> block
+	ContentThinkDone    bool   // a </think> has already been seen this turn
+	ContentThinkBuffer  string // holds a partial tag spanning multiple deltas
+	ContentThinkSawOpen bool   // a <think> open tag was seen this turn
+
+	// State for SalvageTextToolCalls (text tool call -> structured tool_calls).
+	SalvageDecided   bool   // whether we've decided prose vs tool-call for this turn
+	SalvageBuffering bool   // currently withholding content as a tool-call candidate
+	SalvageBuffer    string // accumulated candidate content
 }
 
 const (

@@ -27,13 +27,19 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
-	if !forceFormat && !thinkToContent {
+	disguiseOn := info.ChannelSetting.ContentThinkToReasoning || info.ChannelSetting.SalvageTextToolCalls
+
+	if !forceFormat && !thinkToContent && !disguiseOn {
 		return helper.StringData(c, data)
 	}
 
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
 		return err
+	}
+
+	if disguiseOn {
+		return sendDisguisedStreamChunk(c, info, &lastStreamResponse)
 	}
 
 	if !thinkToContent {
@@ -235,6 +241,51 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		forceFormat = true
 	}
 
+	contentThinkModified := false
+	if info.ChannelSetting.ContentThinkToReasoning {
+		for i := range simpleResponse.Choices {
+			msg := &simpleResponse.Choices[i].Message
+			if msg.GetReasoningContent() != "" {
+				continue
+			}
+			reasoning, content := extractInlineThinkWhole(msg.StringContent())
+			if reasoning != "" {
+				msg.SetStringContent(content)
+				msg.ReasoningContent = &reasoning
+				contentThinkModified = true
+			}
+		}
+	}
+
+	if info.ChannelSetting.SalvageTextToolCalls {
+		for i := range simpleResponse.Choices {
+			choice := &simpleResponse.Choices[i]
+			if hasNativeToolCalls(choice.Message.ToolCalls) {
+				continue
+			}
+			calls, ok := parseTextToolCalls(choice.Message.StringContent())
+			if !ok {
+				continue
+			}
+			callBytes, err := common.Marshal(calls)
+			if err != nil {
+				continue
+			}
+			choice.Message.ToolCalls = callBytes
+			choice.Message.SetStringContent("")
+			choice.FinishReason = constant.FinishReasonToolCalls
+			contentThinkModified = true
+		}
+	}
+
+	// model-name disguise: never leak the upstream model name to the client.
+	modelRewrite := false
+	if (info.ChannelSetting.ContentThinkToReasoning || info.ChannelSetting.SalvageTextToolCalls) &&
+		info.OriginModelName != "" && simpleResponse.Model != info.OriginModelName {
+		simpleResponse.Model = info.OriginModelName
+		modelRewrite = true
+	}
+
 	usageModified := false
 	if simpleResponse.Usage.PromptTokens == 0 {
 		completionTokens := simpleResponse.Usage.CompletionTokens
@@ -256,16 +307,21 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
-		if usageModified {
+		if usageModified || modelRewrite {
 			var bodyMap map[string]interface{}
 			err = common.Unmarshal(responseBody, &bodyMap)
 			if err != nil {
 				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 			}
-			bodyMap["usage"] = simpleResponse.Usage
+			if usageModified {
+				bodyMap["usage"] = simpleResponse.Usage
+			}
+			if modelRewrite {
+				bodyMap["model"] = info.OriginModelName
+			}
 			responseBody, _ = common.Marshal(bodyMap)
 		}
-		if forceFormat {
+		if forceFormat || contentThinkModified {
 			responseBody, err = common.Marshal(simpleResponse)
 			if err != nil {
 				return nil, types.NewError(err, types.ErrorCodeBadResponseBody)

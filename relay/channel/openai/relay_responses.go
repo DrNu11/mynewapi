@@ -40,7 +40,10 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		c.Set("image_generation_call_size", responsesResponse.GetSize())
 	}
 
-	// 写入新的 response body
+	// 写入新的 response body（伪装渠道：模型名改写 / <think> 抽取 / 文本工具调用还原）
+	if newBody, ok := applyResponsesDisguiseWhole(info, responseBody); ok {
+		responseBody = newBody
+	}
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	// compute usage
@@ -79,6 +82,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
 
+	var disguise *responsesStreamDisguise
+	if responsesDisguiseEnabled(info) {
+		disguise = newResponsesStreamDisguise(info)
+	}
+
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
@@ -88,7 +96,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		sendResponsesStreamData(c, streamResponse, data)
+		if disguise != nil {
+			disguise.handleEvent(c, streamResponse, data)
+		} else {
+			sendResponsesStreamData(c, streamResponse, data)
+		}
 		switch streamResponse.Type {
 		case "response.completed":
 			if streamResponse.Response != nil {

@@ -1,8 +1,17 @@
 package dto
 
 type ChannelSettings struct {
-	ForceFormat            bool   `json:"force_format,omitempty"`
-	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
+	ForceFormat       bool `json:"force_format,omitempty"`
+	ThinkingToContent bool `json:"thinking_to_content,omitempty"`
+	// ContentThinkToReasoning extracts inline <think>...</think> blocks emitted
+	// inside the assistant content into the reasoning_content field on the
+	// /v1/chat/completions path (the reverse of ThinkingToContent). Useful for
+	// upstreams that embed reasoning as <think> tags in content.
+	ContentThinkToReasoning bool `json:"content_think_to_reasoning,omitempty"`
+	// SalvageTextToolCalls detects tool calls that an upstream emitted as plain
+	// text (e.g. <minimax:tool_call>, <invoke name=...>, or a ```json {"tool"..}```
+	// block) and converts them into structured tool_calls / function_call output.
+	SalvageTextToolCalls   bool   `json:"salvage_text_tool_calls,omitempty"`
 	Proxy                  string `json:"proxy"`
 	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt           string `json:"system_prompt,omitempty"`
