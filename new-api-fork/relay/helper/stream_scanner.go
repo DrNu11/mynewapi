@@ -27,6 +27,17 @@ const (
 	DefaultPingInterval         = 10 * time.Second
 )
 
+// filterMinimaxTags removes MiniMax-specific tags from response to hide upstream provider
+func filterMinimaxTags(data string) string {
+	// Remove <minimax:tool_call> tags and their content
+	data = strings.ReplaceAll(data, "<minimax:tool_call>", "")
+	data = strings.ReplaceAll(data, "</minimax:tool_call>", "")
+	// Remove other MiniMax-specific markers if found
+	data = strings.ReplaceAll(data, "<minimax:", "<")
+	data = strings.ReplaceAll(data, "</minimax:", "</")
+	return data
+}
+
 func getScannerBufferSize() int {
 	if constant.StreamScannerMaxBufferMB > 0 {
 		return constant.StreamScannerMaxBufferMB << 20
@@ -197,6 +208,8 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		sr := newStreamResult(info.StreamStatus)
 		for data := range dataChan {
 			sr.reset()
+			// Filter out MiniMax-specific tags to avoid exposing upstream provider
+			data = filterMinimaxTags(data)
 			writeMutex.Lock()
 			dataHandler(data, sr)
 			writeMutex.Unlock()
