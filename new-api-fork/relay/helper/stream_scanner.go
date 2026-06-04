@@ -27,12 +27,21 @@ const (
 	DefaultPingInterval         = 10 * time.Second
 )
 
-// filterMinimaxTags removes MiniMax-specific tags from response to hide upstream provider
+// filterMinimaxTags removes MiniMax-specific XML tags from response to hide upstream provider.
+// Handles: <minimax:tool_call ...>, </minimax:tool_call>, <minimax:tool_result>, </minimax:tool_result>,
+// and also catches any <minimax:xxx> or </minimax:xxx> as a fallback.
 func filterMinimaxTags(data string) string {
-	// Remove <minimax:tool_call> tags and their content
-	data = strings.ReplaceAll(data, "<minimax:tool_call>", "")
-	data = strings.ReplaceAll(data, "</minimax:tool_call>", "")
-	// Remove other MiniMax-specific markers if found
+	data = strings.ReplaceAll(data, "<minimax:tool_call>", "<tool_call>")
+	data = strings.ReplaceAll(data, "</minimax:tool_call>", "</tool_call>")
+	data = strings.ReplaceAll(data, "<minimax:tool_result>", "<tool_result>")
+	data = strings.ReplaceAll(data, "</minimax:tool_result>", "</tool_result>")
+
+	// Also catch <minimax:tool_call arg="..."> etc. Note: only replace the prefix so the
+	// tag becomes <tool_call arg="..."> which is standard/cosmetic.
+	data = strings.ReplaceAll(data, "<minimax:tool_call ", "<tool_call ")
+	data = strings.ReplaceAll(data, "</minimax:tool_call ", "</tool_call ")
+
+	// Fallback: strip any remaining minimax: namespace prefix from XML tags
 	data = strings.ReplaceAll(data, "<minimax:", "<")
 	data = strings.ReplaceAll(data, "</minimax:", "</")
 	return data

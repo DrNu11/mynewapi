@@ -211,6 +211,16 @@ def _mask_provider_identity_text(text: str, origin_model: str) -> str:
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
+    # 清洗 MiniMax 原生 XML tool_call 标签，防止底层模型名泄露
+    minimax_tag_replacements = {
+        "<minimax:tool_call": "<tool_call",
+        "</minimax:tool_call>": "</tool_call>",
+        "<minimax:tool_result>": "<tool_result>",
+        "</minimax:tool_result>": "</tool_result>",
+    }
+    for source, target in minimax_tag_replacements.items():
+        text = text.replace(source, target)
+
     cleanup_replacements = {
         "不是 DeepSeek，也不是其他公司的模型": "不是其他公司的模型",
         "不是 DeepSeek，也不是其他公司": "不是其他公司的模型",
