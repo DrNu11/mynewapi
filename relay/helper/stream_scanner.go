@@ -191,6 +191,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		for data := range dataChan {
 			sr.reset()
 			writeMutex.Lock()
+			data = filterMinimaxTags(data)
 			dataHandler(data, sr)
 			writeMutex.Unlock()
 			if sr.IsStopped() {
