@@ -14,12 +14,13 @@ echo "==> [1/6] 本地 build"
 cd "$LOCAL_DIR"
 npm run build
 
-echo "==> [2/6] 打包(排除 node_modules / data / .git)"
+echo "==> [2/6] 打包(排除 node_modules / data / .git / .env.local)"
 PARENT_DIR="$(dirname "$LOCAL_DIR")"
 PROJECT_NAME="$(basename "$LOCAL_DIR")"
 TARBALL="/tmp/${PROJECT_NAME}_${TS}.tar.gz"
 tar --exclude="${PROJECT_NAME}/node_modules" \
     --exclude="${PROJECT_NAME}/data" \
+    --exclude="${PROJECT_NAME}/.env.local" \
     --exclude="${PROJECT_NAME}/.git" \
     -czf "$TARBALL" -C "$PARENT_DIR" "$PROJECT_NAME"
 ls -lh "$TARBALL"
