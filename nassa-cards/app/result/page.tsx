@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2 } from 'lucide-react';
+import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2, MessageSquare } from 'lucide-react';
 import { formatDaysCN } from '@/lib/plans';
 
 interface ResultData {
@@ -374,6 +374,26 @@ export default function ResultPage() {
         <p className="mt-2 text-sm text-slate-400">
           请妥善保存以下信息,粘贴到 Cherry Studio / Claude Code / Cursor 等工具即可使用
         </p>
+
+        {/* 在线体验 Playground CTA */}
+        <div className="mt-6 rounded-xl border border-brand-500/40 bg-gradient-to-r from-brand-500/20 via-brand-500/10 to-brand-500/5 p-5 shadow-lg shadow-brand-500/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-brand-300">
+              <Sparkles className="h-4 w-4 animate-pulse text-brand-400" />
+              <span>智能网页聊天端已就绪</span>
+            </div>
+            <p className="text-xs text-slate-400">
+              无需配置任何客户端软件，点击即可立即与您的 AI 助手在线极速对话。
+            </p>
+          </div>
+          <button
+            onClick={() => router.push('/chat')}
+            className="flex items-center gap-1.5 rounded-lg bg-brand-500 px-4 py-2.5 text-xs font-bold text-white shadow-md hover:bg-brand-600 transition shrink-0"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            立即在线体验
+          </button>
+        </div>
 
         {/* API Key */}
         <div className="mt-8 rounded-xl border border-slate-700 bg-slate-900/60 p-5">
