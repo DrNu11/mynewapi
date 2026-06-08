@@ -84,6 +84,26 @@ export const CATEGORY_LIST: CategoryMeta[] = [
   CATEGORIES.claude,
 ];
 
+/**
+ * 模型显示名别名 — 某些模型在上游渠道做了映射(如 gpt-5.5 → gpt-5.4-mini),
+ * 但给客户展示和统计时统一归入一个对外名称,让卡密看板不暴露内部渠道细节。
+ *
+ * key = 客户可能请求的任意内部模型名
+ * val = 在 cards 统计/展示中统一显示的模型名
+ */
+export const MODEL_DISPLAY_ALIASES: Record<string, string> = {
+  'gpt-5.4': 'gpt-5.5',
+  'gpt-5.4-mini': 'gpt-5.5',
+  'gpt-5.2': 'gpt-5.5',
+  'GPT-5.4': 'gpt-5.5',
+  'GPT-5.4 Mini': 'gpt-5.5',
+};
+
+/** 解析模型显示名:有别名走别名,否则原样返回 */
+export function displayModelName(requestedModel: string): string {
+  return MODEL_DISPLAY_ALIASES[requestedModel] ?? requestedModel;
+}
+
 export function isCategory(v: unknown): v is Category {
   return v === 'deepseek' || v === 'gpt' || v === 'claude';
 }

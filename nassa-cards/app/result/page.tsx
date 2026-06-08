@@ -206,13 +206,13 @@ export default function ResultPage() {
   }, []);
 
   useEffect(() => {
-    const raw = sessionStorage.getItem('nc_result');
+    const raw = localStorage.getItem('nc_cache') || sessionStorage.getItem('nc_result');
     if (!raw) {
       router.replace('/');
       return;
     }
     setData(JSON.parse(raw));
-    setAlready(sessionStorage.getItem('nc_already') === '1');
+    setAlready(localStorage.getItem('nc_cache_code') !== null || sessionStorage.getItem('nc_already') === '1');
   }, [router]);
 
   // 拉实时用量,页面留着就每 60s 自动刷新(手动刷新另走 refresh 函数)
@@ -319,6 +319,7 @@ export default function ResultPage() {
       const newData = { ...data, expires_at: body.data.after_expires_at };
       setData(newData);
       sessionStorage.setItem('nc_result', JSON.stringify(newData));
+      localStorage.setItem('nc_cache', JSON.stringify(newData));
       setRenewSuccess({
         added_days: body.data.added_days,
         before_expires_at: body.data.before_expires_at,
