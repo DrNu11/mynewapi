@@ -340,6 +340,11 @@ export default function ResultPage() {
     setTimeout(() => setCopied(null), 1500);
   };
 
+  const handleBackToHome = () => {
+    sessionStorage.setItem('nc_skip_cache_redirect', '1');
+    window.location.assign('/');
+  };
+
   // expires_at 为 null = 尊享套餐(永不过期,只受额度约束)
   const noExpire = data.expires_at === null;
   const expiresDate = noExpire ? null : new Date(data.expires_at! * 1000);
@@ -356,7 +361,8 @@ export default function ResultPage() {
     <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       <div className="mx-auto max-w-3xl px-6 pt-12 pb-20">
         <button
-          onClick={() => router.push('/')}
+          type="button"
+          onClick={handleBackToHome}
           className="mb-6 inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -373,6 +379,25 @@ export default function ResultPage() {
         <p className="mt-2 text-sm text-slate-400">
           请妥善保存以下信息,粘贴到 Cherry Studio / Claude Code / Cursor 等工具即可使用
         </p>
+
+        <a
+          href="/chat"
+          className="mt-8 flex items-center justify-between gap-4 rounded-xl border border-brand-500/50 bg-brand-500/10 px-5 py-4 shadow-lg shadow-brand-500/10 transition hover:border-brand-400 hover:bg-brand-500/15"
+        >
+          <div className="flex min-w-0 items-start gap-3">
+            <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-brand-300" />
+            <div className="min-w-0">
+              <div className="font-semibold text-slate-100">智能网页聊天端已就绪</div>
+              <div className="mt-1 text-sm text-slate-400">
+                无需配置客户端软件,点击即可与您的 AI 助手在线对话。
+              </div>
+            </div>
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white">
+            立即在线体验
+            <ExternalLink className="h-4 w-4" />
+          </span>
+        </a>
 
         {/* API Key */}
         <div className="mt-8 rounded-xl border border-slate-700 bg-slate-900/60 p-5">

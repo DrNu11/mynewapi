@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { PLANS } from '@/lib/plans';
 import type { Plan } from '@/lib/plans';
@@ -19,7 +19,36 @@ export default function HomePage() {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkingCache, setCheckingCache] = useState(true);
   const router = useRouter();
+
+  // 页面加载时检查本地缓存，有未过期的 key 直接跳 result
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('nc_skip_cache_redirect') === '1') {
+        sessionStorage.removeItem('nc_skip_cache_redirect');
+        setCheckingCache(false);
+        return;
+      }
+
+      const raw = localStorage.getItem('nc_cache');
+      if (!raw) { setCheckingCache(false); return; }
+      const cached = JSON.parse(raw);
+      if (!cached?.api_key) { setCheckingCache(false); return; }
+      // 检查是否已过期
+      if (cached.expires_at && cached.expires_at * 1000 < Date.now()) {
+        localStorage.removeItem('nc_cache');
+        localStorage.removeItem('nc_cache_code');
+        setCheckingCache(false);
+        return;
+      }
+      sessionStorage.setItem('nc_result', raw);
+      sessionStorage.setItem('nc_already', '1');
+      router.replace('/result');
+    } catch {
+      setCheckingCache(false);
+    }
+  }, [router]);
 
   async function handleRedeem(e: React.FormEvent) {
     e.preventDefault();
@@ -37,14 +66,25 @@ export default function HomePage() {
         setLoading(false);
         return;
       }
-      // 把激活信息塞到 sessionStorage 跳转到结果页
+      // 写入 sessionStorage（当前页面跳转用）
       sessionStorage.setItem('nc_result', JSON.stringify(body.data));
       sessionStorage.setItem('nc_already', body.already_activated ? '1' : '0');
+      // 写入 localStorage（跨浏览器会话持久化）
+      localStorage.setItem('nc_cache', JSON.stringify(body.data));
+      localStorage.setItem('nc_cache_code', code.trim());
       router.push('/result');
     } catch (err: any) {
       setError(err.message || '网络错误');
       setLoading(false);
     }
+  }
+
+  if (checkingCache) {
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+      </main>
+    );
   }
 
   return (
@@ -119,11 +159,11 @@ export default function HomePage() {
               )}
             </button>
             <p className="mt-3 text-center text-xs text-slate-500">
-              激活后可重新输入同一卡密查看 API Key,直到到期
+              激活后可重新输入同一卡密查看 API Key,直到到期。关闭浏览器后重新打开无需再次输入。
             </p>
           </form>
 
-          {/* 购买卡 — 跳转到 qxvx.cn 店铺 */}
+          {/* 购买卡 */}
           <a
             href="https://pay.qxvx.cn/shop/codex"
             target="_blank"
@@ -148,7 +188,7 @@ export default function HomePage() {
           </a>
         </div>
 
-        {/* 套餐展示 — 按分类分组 */}
+        {/* 套餐展示 */}
         <div className="mt-16 space-y-12">
           {CATEGORY_LIST.map((cat) => (
             <div key={cat.id}>
