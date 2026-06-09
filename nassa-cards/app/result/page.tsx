@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2 } from 'lucide-react';
+import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2, Film } from 'lucide-react';
 import { formatDaysCN } from '@/lib/plans';
 
 interface ResultData {
@@ -356,6 +356,7 @@ export default function ResultPage() {
     : remainHours > 48
       ? `${Math.floor(remainHours / 24)} 天 ${Math.floor(remainHours % 24)} 小时`
       : `${remainHours.toFixed(1)} 小时`;
+  const canUseVideo = data.category === 'gpt' || data.category === 'deepseek';
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
@@ -398,6 +399,27 @@ export default function ResultPage() {
             <ExternalLink className="h-4 w-4" />
           </span>
         </a>
+
+        {canUseVideo && (
+          <a
+            href="/video"
+            className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-cyan-500/50 bg-cyan-500/10 px-5 py-4 shadow-lg shadow-cyan-500/10 transition hover:border-cyan-400 hover:bg-cyan-500/15"
+          >
+            <div className="flex min-w-0 items-start gap-3">
+              <Film className="mt-0.5 h-5 w-5 shrink-0 text-cyan-300" />
+              <div className="min-w-0">
+                <div className="font-semibold text-slate-100">图生视频工作台已开放</div>
+                <div className="mt-1 text-sm text-slate-400">
+                  使用当前已激活卡密生成 MiniMax Hailuo 视频，无需再次填写 API Key。
+                </div>
+              </div>
+            </div>
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-medium text-white">
+              生成视频
+              <ExternalLink className="h-4 w-4" />
+            </span>
+          </a>
+        )}
 
         {/* API Key */}
         <div className="mt-8 rounded-xl border border-slate-700 bg-slate-900/60 p-5">

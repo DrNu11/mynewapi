@@ -44,7 +44,6 @@ function init(inst: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_cards_code ON cards(code);
     CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status);
     CREATE INDEX IF NOT EXISTS idx_cards_token_key ON cards(newapi_token_key);
-    CREATE INDEX IF NOT EXISTS idx_cards_pool ON cards(pool);
 
     CREATE TABLE IF NOT EXISTS request_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,6 +84,27 @@ function init(inst: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_renewals_original ON renewals(original_card_id);
     CREATE INDEX IF NOT EXISTS idx_renewals_when ON renewals(renewed_at);
+
+    CREATE TABLE IF NOT EXISTS video_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT UNIQUE NOT NULL,
+      card_id INTEGER NOT NULL,
+      sk_key TEXT NOT NULL,
+      model TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      duration INTEGER NOT NULL,
+      resolution TEXT NOT NULL,
+      status TEXT NOT NULL,
+      file_id TEXT,
+      download_url TEXT,
+      error_message TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (card_id) REFERENCES cards(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_video_tasks_task_id ON video_tasks(task_id);
+    CREATE INDEX IF NOT EXISTS idx_video_tasks_card_id ON video_tasks(card_id);
+    CREATE INDEX IF NOT EXISTS idx_video_tasks_sk_key ON video_tasks(sk_key);
   `);
   // Migration: 给老库补缺失列
   const cols = inst.prepare('PRAGMA table_info(cards)').all() as Array<{ name: string }>;
@@ -99,7 +119,6 @@ function init(inst: Database.Database) {
   }
   if (!cols.some((c) => c.name === 'pool')) {
     inst.exec('ALTER TABLE cards ADD COLUMN pool TEXT');
-    inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_pool ON cards(pool)');
   }
   if (!cols.some((c) => c.name === 'newapi_user_id')) {
     inst.exec('ALTER TABLE cards ADD COLUMN newapi_user_id INTEGER');
@@ -108,6 +127,7 @@ function init(inst: Database.Database) {
     inst.exec('ALTER TABLE cards ADD COLUMN disable_reason TEXT');
   }
   inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_newapi_user_id ON cards(newapi_user_id)');
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_pool ON cards(pool)');
   // request_logs 老库补 model 列(新建库已在上面 CREATE 时带上)
   const rlCols = inst.prepare('PRAGMA table_info(request_logs)').all() as Array<{ name: string }>;
   if (!rlCols.some((c) => c.name === 'model')) {
@@ -138,6 +158,23 @@ export interface Card {
   activator_ip: string | null;
   disable_reason: string | null;
   notes: string | null;
+}
+
+export interface VideoTask {
+  id: number;
+  task_id: string;
+  card_id: number;
+  sk_key: string;
+  model: string;
+  prompt: string;
+  duration: number;
+  resolution: string;
+  status: string;
+  file_id: string | null;
+  download_url: string | null;
+  error_message: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export function getCardByCode(code: string): Card | null {
@@ -235,6 +272,52 @@ export function getCardByTokenKey(skKey: string): Card | null {
       .prepare('SELECT * FROM cards WHERE newapi_token_key = ?')
       .get(skKey) as Card) || null
   );
+}
+
+export function insertVideoTask(row: Omit<VideoTask, 'id' | 'created_at' | 'updated_at'>): VideoTask {
+  const now = Math.floor(Date.now() / 1000);
+  db().prepare(
+    `INSERT INTO video_tasks (
+      task_id, card_id, sk_key, model, prompt, duration, resolution, status,
+      file_id, download_url, error_message, created_at, updated_at
+    ) VALUES (
+      @task_id, @card_id, @sk_key, @model, @prompt, @duration, @resolution, @status,
+      @file_id, @download_url, @error_message, @created_at, @updated_at
+    )`
+  ).run({ ...row, created_at: now, updated_at: now });
+  return getVideoTaskByTaskId(row.task_id) as VideoTask;
+}
+
+export function getVideoTaskByTaskId(taskId: string): VideoTask | null {
+  return (
+    (db().prepare('SELECT * FROM video_tasks WHERE task_id = ?').get(taskId) as VideoTask) || null
+  );
+}
+
+export function updateVideoTask(
+  taskId: string,
+  patch: Partial<Pick<VideoTask, 'status' | 'file_id' | 'download_url' | 'error_message'>>
+): VideoTask | null {
+  const task = getVideoTaskByTaskId(taskId);
+  if (!task) return null;
+  const next = {
+    status: patch.status ?? task.status,
+    file_id: patch.file_id ?? task.file_id,
+    download_url: patch.download_url ?? task.download_url,
+    error_message: patch.error_message ?? task.error_message,
+    updated_at: Math.floor(Date.now() / 1000),
+    task_id: taskId,
+  };
+  db().prepare(
+    `UPDATE video_tasks
+     SET status = @status,
+         file_id = @file_id,
+         download_url = @download_url,
+         error_message = @error_message,
+         updated_at = @updated_at
+     WHERE task_id = @task_id`
+  ).run(next);
+  return getVideoTaskByTaskId(taskId);
 }
 
 /** 近 N 秒内 sk-key 请求数(滑动窗口,保留备用;不再用于 RPH 限速) */
