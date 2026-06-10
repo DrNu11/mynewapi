@@ -98,6 +98,7 @@ function init(inst: Database.Database) {
       file_id TEXT,
       download_url TEXT,
       error_message TEXT,
+      account_index INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       FOREIGN KEY (card_id) REFERENCES cards(id)
@@ -133,6 +134,15 @@ function init(inst: Database.Database) {
   if (!rlCols.some((c) => c.name === 'model')) {
     inst.exec('ALTER TABLE request_logs ADD COLUMN model TEXT');
   }
+  // video_quota: 单卡视频生成总次数(默认 1, 0 = 不限)
+  if (!cols.some((c) => c.name === 'video_quota')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN video_quota INTEGER NOT NULL DEFAULT 1');
+  }
+  // account_index: 视频任务使用的海螺账号编号
+  const vtCols = inst.prepare('PRAGMA table_info(video_tasks)').all() as Array<{ name: string }>;
+  if (!vtCols.some((c) => c.name === 'account_index')) {
+    inst.exec('ALTER TABLE video_tasks ADD COLUMN account_index INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 export interface Card {
@@ -144,6 +154,8 @@ export interface Card {
   category: string | null;
   /** 每小时请求数上限(0 = 不限) */
   rph: number;
+  /** 视频生成总次数(默认 3, 0 = 不限) */
+  video_quota: number;
   /** 内部运营标签(号池/批次),仅管理员可见;NULL = 未归属 */
   pool: string | null;
   status: 'unused' | 'activating' | 'activated' | 'expired' | 'disabled';
@@ -173,6 +185,7 @@ export interface VideoTask {
   file_id: string | null;
   download_url: string | null;
   error_message: string | null;
+  account_index: number;
   created_at: number;
   updated_at: number;
 }
@@ -279,10 +292,10 @@ export function insertVideoTask(row: Omit<VideoTask, 'id' | 'created_at' | 'upda
   db().prepare(
     `INSERT INTO video_tasks (
       task_id, card_id, sk_key, model, prompt, duration, resolution, status,
-      file_id, download_url, error_message, created_at, updated_at
+      file_id, download_url, error_message, account_index, created_at, updated_at
     ) VALUES (
       @task_id, @card_id, @sk_key, @model, @prompt, @duration, @resolution, @status,
-      @file_id, @download_url, @error_message, @created_at, @updated_at
+      @file_id, @download_url, @error_message, @account_index, @created_at, @updated_at
     )`
   ).run({ ...row, created_at: now, updated_at: now });
   return getVideoTaskByTaskId(row.task_id) as VideoTask;
@@ -318,6 +331,51 @@ export function updateVideoTask(
      WHERE task_id = @task_id`
   ).run(next);
   return getVideoTaskByTaskId(taskId);
+}
+
+/** 北京时区(UTC+8)当天 0 点 unix 秒时间戳 */
+export function todayStartSeconds(): number {
+  const now = new Date();
+  const beijing = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  beijing.setHours(0, 0, 0, 0);
+  return Math.floor(beijing.getTime() / 1000);
+}
+
+/** 查询某卡密已使用的视频生成次数 */
+export function getVideoQuotaUsed(cardId: number): number {
+  const row = db()
+    .prepare('SELECT COUNT(*) as c FROM video_tasks WHERE card_id = ?')
+    .get(cardId) as { c: number };
+  return row?.c || 0;
+}
+
+/** 今日全局视频生成次数(所有账号合计) */
+export function getRecentVideoCount(): number {
+  const since = todayStartSeconds();
+  const row = db()
+    .prepare('SELECT COUNT(*) as c FROM video_tasks WHERE created_at >= ?')
+    .get(since) as { c: number };
+  return row?.c || 0;
+}
+
+/** 今日指定账号的视频生成次数 */
+export function getRecentVideoCountByAccount(accountIndex: number): number {
+  const since = todayStartSeconds();
+  const row = db()
+    .prepare('SELECT COUNT(*) as c FROM video_tasks WHERE created_at >= ? AND account_index = ?')
+    .get(since, accountIndex) as { c: number };
+  return row?.c || 0;
+}
+
+/** 今日各账号的视频生成次数 */
+export function getAccountVideoCounts(): Record<number, number> {
+  const since = todayStartSeconds();
+  const rows = db()
+    .prepare('SELECT account_index, COUNT(*) as c FROM video_tasks WHERE created_at >= ? GROUP BY account_index')
+    .all(since) as Array<{ account_index: number; c: number }>;
+  const result: Record<number, number> = {};
+  for (const r of rows) result[r.account_index] = r.c;
+  return result;
 }
 
 /** 近 N 秒内 sk-key 请求数(滑动窗口,保留备用;不再用于 RPH 限速) */

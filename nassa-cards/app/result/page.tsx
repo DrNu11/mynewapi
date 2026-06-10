@@ -342,7 +342,10 @@ export default function ResultPage() {
 
   const handleBackToHome = () => {
     sessionStorage.setItem('nc_skip_cache_redirect', '1');
-    window.location.assign('/');
+    sessionStorage.removeItem('nc_result');
+    localStorage.removeItem('nc_cache');
+    localStorage.removeItem('nc_cache_code');
+    router.push('/');
   };
 
   // expires_at 为 null = 尊享套餐(永不过期,只受额度约束)
@@ -410,7 +413,7 @@ export default function ResultPage() {
               <div className="min-w-0">
                 <div className="font-semibold text-slate-100">图生视频工作台已开放</div>
                 <div className="mt-1 text-sm text-slate-400">
-                  使用当前已激活卡密生成 MiniMax Hailuo 视频，无需再次填写 API Key。
+                  使用当前已激活卡密生成海螺 AI 视频，无需再次填写 API Key。
                 </div>
               </div>
             </div>
