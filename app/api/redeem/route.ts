@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
+
   if (card.status === 'expired') {
     return NextResponse.json(
       { success: false, message: '该卡密已过期,请联系客服' },

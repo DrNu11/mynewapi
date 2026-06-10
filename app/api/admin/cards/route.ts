@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
         plan_days: planMeta.days,
         category: cat,
         rph,
+        video_quota: 1,
         pool,
         status: 'unused',
         created_at: now,

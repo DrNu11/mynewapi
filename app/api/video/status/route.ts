@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCardByCode, getVideoTaskByTaskId, updateVideoTask } from '@/lib/db';
-import { queryMiniMaxVideoTask, retrieveMiniMaxFile } from '@/lib/minimax-video';
+import { queryHailuoVideoTask, retrieveHailuoFile } from '@/lib/minimax-video';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const remote = await queryMiniMaxVideoTask(taskId);
+    const remote = await queryHailuoVideoTask(taskId, task.account_index);
     let patch = {
       status: remote.status,
       file_id: remote.fileId,
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     };
 
     if (remote.fileId && remote.status.toLowerCase().includes('success')) {
-      const file = await retrieveMiniMaxFile(remote.fileId);
+      const file = await retrieveHailuoFile(remote.fileId, task.account_index);
       patch = { ...patch, download_url: file.downloadUrl };
     }
 
