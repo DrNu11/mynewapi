@@ -1,7 +1,6 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import ClickEffects from '@/components/click-effects';
-import PageTransition from '@/components/page-transition';
 
 export const metadata: Metadata = {
   title: 'NassaAPI 激活中心',
@@ -13,9 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="zh-CN">
       <body>
         <ClickEffects />
-        <PageTransition>
-          {children}
-        </PageTransition>
+        {children}
       </body>
     </html>
   );
