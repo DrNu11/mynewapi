@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  Clock,
   Copy,
   Download,
   Film,
@@ -80,6 +82,8 @@ export default function VideoPage() {
   const [quotaLoading, setQuotaLoading] = useState(false);
   const [globalQuota, setGlobalQuota] = useState<GlobalQuotaState | null>(null);
   const [globalQuotaLoading, setGlobalQuotaLoading] = useState(true);
+  const [createdAt, setCreatedAt] = useState<number>(0);
+  const [nowTick, setNowTick] = useState<number>(0);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const firstFrameImage = useMemo(() => imageDataUrl || imageUrl.trim(), [imageDataUrl, imageUrl]);
@@ -175,6 +179,14 @@ export default function VideoPage() {
     };
   }, [task?.task_id, task?.download_url, code]);
 
+  // 生成中每秒 tick(进度条计时)
+  useEffect(() => {
+    if (!task || task.download_url) return;
+    setNowTick(Date.now());
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [task?.task_id, task?.download_url]);
+
   async function onFileChange(file: File | null) {
     setError(null);
     if (!file) return;
@@ -199,6 +211,7 @@ export default function VideoPage() {
     setError(null);
     setLoading(true);
     setTask(null);
+    setCreatedAt(Date.now());
     try {
       const res = await fetch('/api/video/create', {
         method: 'POST',
@@ -269,13 +282,13 @@ export default function VideoPage() {
     <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-100">
       <div className="mx-auto max-w-5xl px-6 pt-10 pb-20">
         <ScrollReveal>
-          <a
+          <Link
             href="/"
             className="inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-slate-200"
           >
             <ArrowLeft className="h-4 w-4" />
             返回激活中心
-          </a>
+          </Link>
         </ScrollReveal>
 
         <ScrollReveal delay={100}>
@@ -290,6 +303,34 @@ export default function VideoPage() {
             <p className="mt-4 text-base text-slate-400 sm:text-lg">
               仅限未激活卡密，每张卡密限 1 次，生成后仍可用于激活/续费
             </p>
+
+            {/* 规则提示 */}
+            <div className="mt-6 mx-auto max-w-2xl rounded-2xl border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-amber-500/10 p-5 text-left shadow-lg shadow-amber-500/5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/20">
+                  <AlertCircle className="h-5 w-5 text-amber-300" />
+                </div>
+                <div className="space-y-2 text-sm">
+                  <p className="font-semibold text-amber-100">
+                    使用规则
+                  </p>
+                  <ul className="space-y-1.5 text-amber-200/80">
+                    <li className="flex items-start gap-2">
+                      <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+                      <span>仅<strong className="text-amber-100">未激活</strong>卡密可用于视频生成，已激活/过期/禁用卡密无法使用</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+                      <span>生成视频后卡密<strong className="text-amber-100">状态不变</strong>，仍可回到首页激活或一键续费</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+                      <span>每张卡密限生成 <strong className="text-amber-100">1 次</strong>视频，全局每日 <strong className="text-amber-100">{globalQuota?.global_quota_total ?? '—'}</strong> 次配额（北京 0 点重置）</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
             {/* 全局配额 */}
             <div className="mt-5 flex flex-col items-center gap-2">
               {globalQuotaLoading ? (
@@ -540,16 +581,63 @@ export default function VideoPage() {
                         </button>
                       </div>
                     </div>
+                  ) : task ? (
+                    <div className="flex min-h-[420px] flex-col items-center justify-center px-4">
+                      {/* 实时进度条 */}
+                      <div className="w-full max-w-md space-y-5">
+                        {/* 状态图标 + 文字 */}
+                        <div className="flex items-center justify-center gap-3">
+                          <div className="relative flex h-12 w-12 items-center justify-center">
+                            <div className="absolute inset-0 animate-ping rounded-full bg-brand-500/20" />
+                            <div className="absolute inset-0 animate-pulse rounded-full border-2 border-brand-500/40" />
+                            <Loader2 className="relative h-6 w-6 animate-spin text-brand-400" />
+                          </div>
+                          <div>
+                            <div className="text-lg font-semibold text-slate-100">
+                              {statusText(task.status)}
+                            </div>
+                            <div className="text-sm text-slate-400">
+                              {task.error_message || '海螺 AI 正在生成视频，请耐心等待'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 进度条 */}
+                        <div className="overflow-hidden rounded-full h-3 bg-slate-800 shadow-inner">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-brand-500 via-purple-500 to-cyan-400 animate-progress-bar"
+                            style={{
+                              backgroundSize: '200% 100%',
+                              animation: 'progress-slide 2s linear infinite',
+                            }}
+                          />
+                        </div>
+
+                        {/* 已用时间 */}
+                        <div className="flex items-center justify-center gap-2 text-sm">
+                          <Clock className="h-4 w-4 text-slate-500" />
+                          <span className="font-mono tabular-nums text-slate-300">
+                            {createdAt && nowTick
+                              ? (() => {
+                                  const elapsed = Math.floor((nowTick - createdAt) / 1000);
+                                  const m = Math.floor(elapsed / 60);
+                                  const s = elapsed % 60;
+                                  return `已等待 ${m}:${String(s).padStart(2, '0')}`;
+                                })()
+                              : '准备中...'}
+                          </span>
+                          <span className="text-slate-500">· 每 8 秒自动更新状态</span>
+                        </div>
+                      </div>
+                    </div>
                   ) : (
                     <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
                       <Film className="h-12 w-12 text-slate-700" />
                       <h3 className="mt-4 text-sm font-medium text-slate-300">
-                        {task ? statusText(task.status) : '还没有视频任务'}
+                        还没有视频任务
                       </h3>
                       <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">
-                        {task
-                          ? task.error_message || '视频生成通常需要几分钟，请保持页面打开。'
-                          : '填写左侧表单创建任务，完成后这里会出现可播放的视频。'}
+                        填写左侧表单创建任务，完成后这里会出现可播放的视频。
                       </p>
                     </div>
                   )}
