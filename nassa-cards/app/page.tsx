@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { PLANS } from '@/lib/plans';
 import type { Plan } from '@/lib/plans';
 import { CATEGORY_LIST } from '@/lib/categories';
 import type { CategoryMeta } from '@/lib/categories';
-import { Sparkles, KeyRound, Loader2, ShieldCheck, Zap, ShoppingCart } from 'lucide-react';
+import { Sparkles, KeyRound, Loader2, ShieldCheck, Zap, ShoppingCart, Film, WandSparkles } from 'lucide-react';
 
 function planDescriptionForCategory(cat: CategoryMeta, plan: Plan): string {
   if (cat.id === 'gpt' && plan.id === '7d') {
@@ -94,7 +95,7 @@ export default function HomePage() {
         <div className="text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-brand-500/30 bg-brand-500/10 px-4 py-1.5 text-sm text-brand-400">
             <Sparkles className="h-4 w-4" />
-            DeepSeek / GPT 两套餐任选
+            DeepSeek / GPT / Claude 三套餐任选
           </div>
           <h1 className="mt-6 text-4xl font-bold tracking-tight sm:text-5xl">
             输入卡密 · 即刻开通
@@ -105,7 +106,7 @@ export default function HomePage() {
         </div>
 
         {/* 激活 / 购买 双栏 */}
-        <div className="mx-auto mt-12 grid max-w-4xl gap-6 lg:grid-cols-2">
+        <div className="mx-auto mt-12 grid max-w-6xl gap-6 md:grid-cols-2 lg:grid-cols-3">
           {/* 激活卡 */}
           <form
             onSubmit={handleRedeem}
@@ -186,6 +187,34 @@ export default function HomePage() {
               <span aria-hidden="true">→</span>
             </div>
           </a>
+
+          {/* 视频生成入口 */}
+          <Link
+            href="/video"
+            className="group flex flex-col justify-between rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur transition hover:border-violet-500/60"
+          >
+            <div>
+              <div className="flex items-center gap-2 text-violet-400">
+                <Film className="h-4 w-4" />
+                <span className="text-sm font-medium">AI 视频生成</span>
+              </div>
+
+              <h3 className="mt-3 text-2xl font-bold text-slate-100">
+                视频在线生成
+              </h3>
+
+              <p className="mt-2 text-sm text-slate-400">
+                上传一张图片和一句提示词，在线生成短视频。
+                未激活卡密默认可体验 1 次，邀请好友成功生成还可获得更多次数。
+              </p>
+            </div>
+
+            <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-violet-500 px-4 py-3 font-medium text-white transition group-hover:bg-violet-600">
+              <WandSparkles className="h-4 w-4" />
+              立即生成
+              <span aria-hidden="true">→</span>
+            </div>
+          </Link>
         </div>
 
         {/* 套餐展示 */}

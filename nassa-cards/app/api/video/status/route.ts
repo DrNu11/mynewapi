@@ -1,22 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCardByCode, getVideoTaskByTaskId, updateVideoTask } from '@/lib/db';
-import { queryHailuoVideoTask, retrieveHailuoFile } from '@/lib/minimax-video';
+import { getCardByCode, getVideoTaskByTaskId } from '@/lib/db';
+import { syncVideoTask } from '@/lib/video-sync';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function deny(message: string, status = 400) {
   return NextResponse.json({ success: false, message }, { status });
-}
-
-function isTerminal(status: string): boolean {
-  const normalized = status.toLowerCase();
-  return (
-    normalized.includes('success') ||
-    normalized.includes('fail') ||
-    normalized.includes('error') ||
-    normalized.includes('cancel')
-  );
 }
 
 export async function POST(req: NextRequest) {
@@ -41,31 +31,11 @@ export async function POST(req: NextRequest) {
     return deny('无权查看该视频任务', 403);
   }
 
-  if (task.download_url || isTerminal(task.status)) {
+  // 已经是终态且有下载地址,直接返回
+  if (task.download_url && task.status === 'Success') {
     return NextResponse.json({ success: true, data: task });
   }
 
-  try {
-    const remote = await queryHailuoVideoTask(taskId, task.account_index);
-    let patch = {
-      status: remote.status,
-      file_id: remote.fileId,
-      download_url: null as string | null,
-      error_message: null as string | null,
-    };
-
-    if (remote.fileId && remote.status.toLowerCase().includes('success')) {
-      const file = await retrieveHailuoFile(remote.fileId, task.account_index);
-      patch = { ...patch, download_url: file.downloadUrl };
-    }
-
-    const updated = updateVideoTask(taskId, patch);
-    return NextResponse.json({ success: true, data: updated });
-  } catch (e: any) {
-    const updated = updateVideoTask(taskId, {
-      status: 'QueryFailed',
-      error_message: e?.message || '查询视频任务失败',
-    });
-    return NextResponse.json({ success: false, message: updated?.error_message, data: updated }, { status: 502 });
-  }
+  const { task: updated, settled } = await syncVideoTask(taskId);
+  return NextResponse.json({ success: true, data: updated });
 }

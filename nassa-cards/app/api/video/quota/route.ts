@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAccountVideoCounts, getCardByCode, getRecentVideoCount, getVideoQuotaUsed, markExpiredCards } from '@/lib/db';
+import { getAccountVideoCounts, getCardByCode, getVideoQuotaUsedBySource, countReservedBySource, markExpiredCards, todayStartSeconds } from '@/lib/db';
 import { getAccountsTotalQuota, HAILUO_ACCOUNTS } from '@/lib/minimax-video';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const VIDEO_QUOTA_PER_CARD = 1;
-
 function buildGlobalQuota() {
   const counts = getAccountVideoCounts();
   const totalQuota = getAccountsTotalQuota();
-  const totalUsed = getRecentVideoCount();
+  const totalUsed = counts ? Object.values(counts).reduce((s, c) => s + c, 0) : 0;
   return {
     global_quota_total: totalQuota,
     global_quota_used: totalUsed,
@@ -49,19 +47,40 @@ export async function GET(req: NextRequest) {
   if (card.status === 'expired') {
     return NextResponse.json({ success: false, message: '此卡密已过期' }, { status: 410 });
   }
-  if (card.status !== 'unused') {
-    return NextResponse.json({ success: false, message: '仅限未激活卡密使用视频生成' }, { status: 403 });
+  if (card.status === 'activating') {
+    return NextResponse.json({ success: false, message: '卡密激活中,请稍后重试' }, { status: 409 });
+  }
+  // 支持 unused 和 activated 卡
+  if (card.status !== 'unused' && card.status !== 'activated') {
+    return NextResponse.json({ success: false, message: '卡密状态不支持视频生成' }, { status: 403 });
   }
 
-  const used = getVideoQuotaUsed(card.id);
-  const remaining = Math.max(0, VIDEO_QUOTA_PER_CARD - used);
+  const now = Math.floor(Date.now() / 1000);
+  const baseUsed = getVideoQuotaUsedBySource(card.id, 'base');
+  const bonusUsed = getVideoQuotaUsedBySource(card.id, 'invite_bonus');
+  const baseReserved = countReservedBySource(card.id, 'base', now);
+  const bonusReserved = countReservedBySource(card.id, 'invite_bonus', now);
+
+  const baseAvailable = card.status === 'unused' ? Math.max(0, card.video_quota - baseUsed - baseReserved) : 0;
+  const bonusAvailable = (card.status === 'unused' || card.status === 'activated')
+    ? Math.max(0, card.video_bonus_quota - bonusUsed - bonusReserved)
+    : 0;
 
   return NextResponse.json({
     success: true,
     data: {
-      quota_total: VIDEO_QUOTA_PER_CARD,
-      quota_used: used,
-      quota_remaining: remaining,
+      base: {
+        total: card.video_quota,
+        used: baseUsed,
+        reserved: baseReserved,
+        remaining: baseAvailable,
+      },
+      invite_bonus: {
+        total: card.video_bonus_quota,
+        used: bonusUsed,
+        reserved: bonusReserved,
+        remaining: bonusAvailable,
+      },
       ...buildGlobalQuota(),
     },
   });
