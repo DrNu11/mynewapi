@@ -134,15 +134,164 @@ function init(inst: Database.Database) {
   if (!rlCols.some((c) => c.name === 'model')) {
     inst.exec('ALTER TABLE request_logs ADD COLUMN model TEXT');
   }
-  // video_quota: 单卡视频生成总次数(默认 1, 0 = 不限)
+  // video_quota: 单卡视频生成基础体验次数(默认 1, 0 = 不限)
   if (!cols.some((c) => c.name === 'video_quota')) {
     inst.exec('ALTER TABLE cards ADD COLUMN video_quota INTEGER NOT NULL DEFAULT 1');
   }
-  // account_index: 视频任务使用的海螺账号编号
+  // video_bonus_quota: 邀请奖励获得的额外视频次数
+  if (!cols.some((c) => c.name === 'video_bonus_quota')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN video_bonus_quota INTEGER NOT NULL DEFAULT 0');
+  }
+  // video_tasks 增量迁移
   const vtCols = inst.prepare('PRAGMA table_info(video_tasks)').all() as Array<{ name: string }>;
   if (!vtCols.some((c) => c.name === 'account_index')) {
     inst.exec('ALTER TABLE video_tasks ADD COLUMN account_index INTEGER NOT NULL DEFAULT 0');
   }
+  if (!vtCols.some((c) => c.name === 'quota_source')) {
+    inst.exec("ALTER TABLE video_tasks ADD COLUMN quota_source TEXT NOT NULL DEFAULT 'base'");
+  }
+  if (!vtCols.some((c) => c.name === 'reservation_id')) {
+    inst.exec('ALTER TABLE video_tasks ADD COLUMN reservation_id INTEGER');
+  }
+  if (!vtCols.some((c) => c.name === 'operation_id')) {
+    inst.exec('ALTER TABLE video_tasks ADD COLUMN operation_id TEXT');
+  }
+  if (!vtCols.some((c) => c.name === 'last_query_error')) {
+    inst.exec('ALTER TABLE video_tasks ADD COLUMN last_query_error TEXT');
+  }
+  if (!vtCols.some((c) => c.name === 'query_error_count')) {
+    inst.exec('ALTER TABLE video_tasks ADD COLUMN query_error_count INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!vtCols.some((c) => c.name === 'last_queried_at')) {
+    inst.exec('ALTER TABLE video_tasks ADD COLUMN last_queried_at INTEGER');
+  }
+  inst.exec('CREATE UNIQUE INDEX IF NOT EXISTS uk_video_tasks_operation_id ON video_tasks(operation_id) WHERE operation_id IS NOT NULL');
+
+  // video_create_operations: 请求级幂等
+  inst.exec(`CREATE TABLE IF NOT EXISTS video_create_operations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation_id TEXT UNIQUE NOT NULL,
+    card_id INTEGER NOT NULL,
+    payload_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    video_task_id INTEGER,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (card_id) REFERENCES cards(id),
+    FOREIGN KEY (video_task_id) REFERENCES video_tasks(id)
+  )`);
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_vco_card_status ON video_create_operations(card_id, status, created_at)');
+
+  // video_quota_reservations: 额度预占
+  inst.exec(`CREATE TABLE IF NOT EXISTS video_quota_reservations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation_id TEXT NOT NULL,
+    attempt_id TEXT UNIQUE NOT NULL,
+    card_id INTEGER NOT NULL,
+    quota_source TEXT NOT NULL,
+    account_index INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'reserved',
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    committed_at INTEGER,
+    released_at INTEGER,
+    release_reason TEXT,
+    FOREIGN KEY (card_id) REFERENCES cards(id)
+  )`);
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_vqr_card_source_status ON video_quota_reservations(card_id, quota_source, status, expires_at)');
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_vqr_account_status ON video_quota_reservations(account_index, status, expires_at)');
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_vqr_operation ON video_quota_reservations(operation_id, created_at)');
+  inst.exec("CREATE UNIQUE INDEX IF NOT EXISTS uk_vqr_one_active_attempt ON video_quota_reservations(operation_id) WHERE status IN ('reserved', 'uncertain', 'committed')");
+
+  // ---- 邀请奖励系统 ----
+
+  inst.exec(`CREATE TABLE IF NOT EXISTS invite_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invite_code TEXT UNIQUE NOT NULL,
+    inviter_card_id INTEGER NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'active',
+    creator_ip_hash TEXT,
+    creator_device_hash TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (inviter_card_id) REFERENCES cards(id)
+  )`);
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_invite_links_code ON invite_links(invite_code)');
+
+  inst.exec(`CREATE TABLE IF NOT EXISTS invite_visits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    visit_token_hash TEXT UNIQUE NOT NULL,
+    invite_link_id INTEGER NOT NULL,
+    invitee_ip_hash TEXT,
+    invitee_device_hash TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    FOREIGN KEY (invite_link_id) REFERENCES invite_links(id)
+  )`);
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_invite_visits_link_created ON invite_visits(invite_link_id, created_at)');
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_invite_visits_expiry ON invite_visits(expires_at)');
+
+  inst.exec(`CREATE TABLE IF NOT EXISTS invite_attributions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invite_visit_id INTEGER NOT NULL,
+    invite_link_id INTEGER NOT NULL,
+    inviter_card_id INTEGER NOT NULL,
+    invitee_card_id INTEGER NOT NULL,
+    video_task_id INTEGER NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    outcome TEXT,
+    risk_flags TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (invite_visit_id) REFERENCES invite_visits(id),
+    FOREIGN KEY (invite_link_id) REFERENCES invite_links(id),
+    FOREIGN KEY (inviter_card_id) REFERENCES cards(id),
+    FOREIGN KEY (invitee_card_id) REFERENCES cards(id),
+    FOREIGN KEY (video_task_id) REFERENCES video_tasks(id)
+  )`);
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_invite_attr_invitee_status ON invite_attributions(invitee_card_id, status)');
+
+  inst.exec(`CREATE TABLE IF NOT EXISTS invite_redemptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    attribution_id INTEGER NOT NULL UNIQUE,
+    invite_link_id INTEGER NOT NULL,
+    inviter_card_id INTEGER NOT NULL,
+    invitee_card_id INTEGER NOT NULL UNIQUE,
+    qualifying_video_task_id INTEGER NOT NULL UNIQUE,
+    reward_status TEXT NOT NULL,
+    business_date TEXT NOT NULL,
+    risk_flags TEXT,
+    rejected_reason TEXT,
+    created_at INTEGER NOT NULL,
+    granted_at INTEGER,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (attribution_id) REFERENCES invite_attributions(id),
+    FOREIGN KEY (invite_link_id) REFERENCES invite_links(id),
+    FOREIGN KEY (inviter_card_id) REFERENCES cards(id),
+    FOREIGN KEY (invitee_card_id) REFERENCES cards(id),
+    FOREIGN KEY (qualifying_video_task_id) REFERENCES video_tasks(id)
+  )`);
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_invite_redemptions_inviter_day ON invite_redemptions(inviter_card_id, business_date, reward_status)');
+
+  inst.exec(`CREATE TABLE IF NOT EXISTS invite_reward_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    redemption_id INTEGER NOT NULL,
+    inviter_card_id INTEGER NOT NULL,
+    entry_type TEXT NOT NULL,
+    delta INTEGER NOT NULL,
+    business_date TEXT NOT NULL,
+    related_ledger_id INTEGER,
+    reason TEXT,
+    operator TEXT,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (redemption_id) REFERENCES invite_redemptions(id),
+    FOREIGN KEY (inviter_card_id) REFERENCES cards(id),
+    FOREIGN KEY (related_ledger_id) REFERENCES invite_reward_ledger(id)
+  )`);
+  inst.exec('CREATE UNIQUE INDEX IF NOT EXISTS uk_invite_ledger_one_grant ON invite_reward_ledger(redemption_id) WHERE entry_type = \'grant\'');
+  inst.exec('CREATE UNIQUE INDEX IF NOT EXISTS uk_invite_ledger_one_reverse ON invite_reward_ledger(related_ledger_id) WHERE entry_type = \'reverse\'');
+  inst.exec('CREATE INDEX IF NOT EXISTS idx_invite_ledger_inviter_day ON invite_reward_ledger(inviter_card_id, business_date, entry_type)');
 }
 
 export interface Card {
@@ -154,8 +303,10 @@ export interface Card {
   category: string | null;
   /** 每小时请求数上限(0 = 不限) */
   rph: number;
-  /** 视频生成总次数(默认 3, 0 = 不限) */
+  /** 视频生成基础体验次数(默认 1, 0 = 不限) */
   video_quota: number;
+  /** 邀请奖励获得的额外视频次数 */
+  video_bonus_quota: number;
   /** 内部运营标签(号池/批次),仅管理员可见;NULL = 未归属 */
   pool: string | null;
   status: 'unused' | 'activating' | 'activated' | 'expired' | 'disabled';
@@ -186,6 +337,12 @@ export interface VideoTask {
   download_url: string | null;
   error_message: string | null;
   account_index: number;
+  quota_source: string;
+  reservation_id: number | null;
+  operation_id: string | null;
+  last_query_error: string | null;
+  query_error_count: number;
+  last_queried_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -246,8 +403,8 @@ export function releaseCardClaim(code: string): void {
 
 export function insertCard(row: Omit<Card, 'id'>): number {
   const stmt = db().prepare(`
-    INSERT INTO cards (code, plan, plan_days, category, rph, pool, status, created_at, activated_at, expires_at, newapi_user_id, newapi_token_id, newapi_token_key, activator_ip, disable_reason, notes)
-    VALUES (@code, @plan, @plan_days, @category, @rph, @pool, @status, @created_at, @activated_at, @expires_at, @newapi_user_id, @newapi_token_id, @newapi_token_key, @activator_ip, @disable_reason, @notes)
+    INSERT INTO cards (code, plan, plan_days, category, rph, video_quota, pool, status, created_at, activated_at, expires_at, newapi_user_id, newapi_token_id, newapi_token_key, activator_ip, disable_reason, notes)
+    VALUES (@code, @plan, @plan_days, @category, @rph, @video_quota, @pool, @status, @created_at, @activated_at, @expires_at, @newapi_user_id, @newapi_token_id, @newapi_token_key, @activator_ip, @disable_reason, @notes)
   `);
   const info = stmt.run(row);
   return info.lastInsertRowid as number;
@@ -292,10 +449,12 @@ export function insertVideoTask(row: Omit<VideoTask, 'id' | 'created_at' | 'upda
   db().prepare(
     `INSERT INTO video_tasks (
       task_id, card_id, sk_key, model, prompt, duration, resolution, status,
-      file_id, download_url, error_message, account_index, created_at, updated_at
+      file_id, download_url, error_message, account_index, quota_source, reservation_id, operation_id,
+      created_at, updated_at
     ) VALUES (
       @task_id, @card_id, @sk_key, @model, @prompt, @duration, @resolution, @status,
-      @file_id, @download_url, @error_message, @account_index, @created_at, @updated_at
+      @file_id, @download_url, @error_message, @account_index, @quota_source, @reservation_id, @operation_id,
+      @created_at, @updated_at
     )`
   ).run({ ...row, created_at: now, updated_at: now });
   return getVideoTaskByTaskId(row.task_id) as VideoTask;
@@ -309,15 +468,18 @@ export function getVideoTaskByTaskId(taskId: string): VideoTask | null {
 
 export function updateVideoTask(
   taskId: string,
-  patch: Partial<Pick<VideoTask, 'status' | 'file_id' | 'download_url' | 'error_message'>>
+  patch: Partial<Pick<VideoTask, 'status' | 'file_id' | 'download_url' | 'error_message' | 'last_query_error' | 'query_error_count' | 'last_queried_at'>>
 ): VideoTask | null {
   const task = getVideoTaskByTaskId(taskId);
   if (!task) return null;
   const next = {
     status: patch.status ?? task.status,
-    file_id: patch.file_id ?? task.file_id,
-    download_url: patch.download_url ?? task.download_url,
-    error_message: patch.error_message ?? task.error_message,
+    file_id: 'file_id' in patch ? (patch.file_id ?? null) : task.file_id,
+    download_url: 'download_url' in patch ? (patch.download_url ?? null) : task.download_url,
+    error_message: 'error_message' in patch ? (patch.error_message ?? null) : task.error_message,
+    last_query_error: 'last_query_error' in patch ? (patch.last_query_error ?? null) : task.last_query_error,
+    query_error_count: patch.query_error_count ?? task.query_error_count,
+    last_queried_at: 'last_queried_at' in patch ? (patch.last_queried_at ?? null) : task.last_queried_at,
     updated_at: Math.floor(Date.now() / 1000),
     task_id: taskId,
   };
@@ -327,6 +489,9 @@ export function updateVideoTask(
          file_id = @file_id,
          download_url = @download_url,
          error_message = @error_message,
+         last_query_error = @last_query_error,
+         query_error_count = @query_error_count,
+         last_queried_at = @last_queried_at,
          updated_at = @updated_at
      WHERE task_id = @task_id`
   ).run(next);
@@ -335,10 +500,16 @@ export function updateVideoTask(
 
 /** 北京时区(UTC+8)当天 0 点 unix 秒时间戳 */
 export function todayStartSeconds(): number {
-  const now = new Date();
-  const beijing = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
-  beijing.setHours(0, 0, 0, 0);
-  return Math.floor(beijing.getTime() / 1000);
+  const now = Math.floor(Date.now() / 1000);
+  const offset = 8 * 3600;
+  return Math.floor((now + offset) / 86400) * 86400 - offset;
+}
+
+/** 北京时区(UTC+8)当天日期字符串 YYYY-MM-DD */
+export function currentBusinessDate(): string {
+  return new Date(Date.now() + 8 * 3600 * 1000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 /** 查询某卡密已使用的视频生成次数 */
@@ -376,6 +547,148 @@ export function getAccountVideoCounts(): Record<number, number> {
   const result: Record<number, number> = {};
   for (const r of rows) result[r.account_index] = r.c;
   return result;
+}
+
+// ---- video quota by source ----
+
+/** 按 quota_source 统计某卡的视频任务数 */
+export function getVideoQuotaUsedBySource(cardId: number, source: string): number {
+  const row = db()
+    .prepare('SELECT COUNT(*) as c FROM video_tasks WHERE card_id = ? AND quota_source = ?')
+    .get(cardId, source) as { c: number };
+  return row?.c || 0;
+}
+
+/** 按 quota_source 统计有效预占数(reserved/uncertain) */
+export function countReservedBySource(cardId: number, source: string, now: number): number {
+  const row = db()
+    .prepare(`SELECT COUNT(*) as c FROM video_quota_reservations
+      WHERE card_id = ? AND quota_source = ? AND status IN ('reserved', 'uncertain')
+      AND (status = 'uncertain' OR expires_at > ?)`)
+    .get(cardId, source, now) as { c: number };
+  return row?.c || 0;
+}
+
+/** 按账号统计当日用量(含已落库任务 + 有效预占) */
+export function countAccountUsageToday(accountIndex: number, since: number, now: number): number {
+  const tasks = (db()
+    .prepare('SELECT COUNT(*) as c FROM video_tasks WHERE account_index = ? AND created_at >= ?')
+    .get(accountIndex, since) as { c: number }).c;
+  const reservations = (db()
+    .prepare(`SELECT COUNT(*) as c FROM video_quota_reservations
+      WHERE account_index = ? AND status IN ('reserved', 'uncertain') AND expires_at > ?`)
+    .get(accountIndex, now) as { c: number }).c;
+  return tasks + reservations;
+}
+
+// ---- video create operations ----
+
+export interface VideoCreateOperation {
+  id: number;
+  operation_id: string;
+  card_id: number;
+  payload_hash: string;
+  status: string;
+  video_task_id: number | null;
+  last_error: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export function getVideoCreateOperation(opId: string): VideoCreateOperation | null {
+  return (db().prepare('SELECT * FROM video_create_operations WHERE operation_id = ?').get(opId) as VideoCreateOperation) || null;
+}
+
+export function insertVideoCreateOperation(row: { operation_id: string; card_id: number; payload_hash: string }): void {
+  const now = Math.floor(Date.now() / 1000);
+  db().prepare('INSERT INTO video_create_operations (operation_id, card_id, payload_hash, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(row.operation_id, row.card_id, row.payload_hash, 'pending', now, now);
+}
+
+export function updateVideoCreateOperation(opId: string, patch: { status?: string; video_task_id?: number | null; last_error?: string | null }): void {
+  const now = Math.floor(Date.now() / 1000);
+  const op = getVideoCreateOperation(opId);
+  if (!op) return;
+  db().prepare('UPDATE video_create_operations SET status = ?, video_task_id = ?, last_error = ?, updated_at = ? WHERE operation_id = ?')
+    .run(patch.status ?? op.status, 'video_task_id' in patch ? (patch.video_task_id ?? null) : op.video_task_id, 'last_error' in patch ? (patch.last_error ?? null) : op.last_error, now, opId);
+}
+
+// ---- video quota reservations ----
+
+export interface VideoQuotaReservation {
+  id: number;
+  operation_id: string;
+  attempt_id: string;
+  card_id: number;
+  quota_source: string;
+  account_index: number;
+  status: string;
+  created_at: number;
+  expires_at: number;
+  committed_at: number | null;
+  released_at: number | null;
+  release_reason: string | null;
+}
+
+export function insertReservation(row: {
+  operation_id: string; attempt_id: string; card_id: number;
+  quota_source: string; account_index: number; status: string; expires_at: number;
+}): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db().prepare(`INSERT INTO video_quota_reservations
+    (operation_id, attempt_id, card_id, quota_source, account_index, status, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(row.operation_id, row.attempt_id, row.card_id, row.quota_source, row.account_index, row.status, now, row.expires_at);
+  return info.lastInsertRowid as number;
+}
+
+export function releaseReservation(attemptId: string, reason: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  db().prepare("UPDATE video_quota_reservations SET status = 'released', released_at = ?, release_reason = ? WHERE attempt_id = ? AND status = 'reserved'")
+    .run(now, reason, attemptId);
+}
+
+export function commitReservation(reservationId: number): void {
+  const now = Math.floor(Date.now() / 1000);
+  db().prepare("UPDATE video_quota_reservations SET status = 'committed', committed_at = ? WHERE id = ?")
+    .run(now, reservationId);
+}
+
+export function markReservationUncertain(attemptId: string): void {
+  db().prepare("UPDATE video_quota_reservations SET status = 'uncertain' WHERE attempt_id = ?")
+    .run(attemptId);
+}
+
+export function releaseExpiredReservations(now: number): number {
+  const info = db().prepare("UPDATE video_quota_reservations SET status = 'released', released_at = ?, release_reason = 'expired' WHERE status = 'reserved' AND expires_at <= ?")
+    .run(now, now);
+  return info.changes;
+}
+
+/** SELECT ... FOR UPDATE 模拟: IMMEDIATE 事务内先读,持有写锁 */
+export function getCardForUpdate(cardId: number): Card | null {
+  return (db().prepare('SELECT * FROM cards WHERE id = ?').get(cardId) as Card) || null;
+}
+
+/** 查出所有需同步的视频任务(Submitted / Processing / Success 但无下载地址) */
+export function getStaleVideoTasks(limit = 50): VideoTask[] {
+  return db()
+    .prepare(`SELECT * FROM video_tasks WHERE status IN ('Submitted', 'Processing')
+      OR (status = 'Success' AND download_url IS NULL)
+      ORDER BY updated_at ASC LIMIT ?`)
+    .all(limit) as VideoTask[];
+}
+
+/** 查出所有 uncertain 操作(供监控) */
+export function getUncertainOperations(): VideoCreateOperation[] {
+  return db()
+    .prepare("SELECT * FROM video_create_operations WHERE status = 'uncertain' ORDER BY created_at DESC")
+    .all() as VideoCreateOperation[];
+}
+
+/** 按 operation_id 查 video_task */
+export function getVideoTaskByOperationId(opId: string): VideoTask | null {
+  return (db().prepare('SELECT * FROM video_tasks WHERE operation_id = ?').get(opId) as VideoTask) || null;
 }
 
 /** 近 N 秒内 sk-key 请求数(滑动窗口,保留备用;不再用于 RPH 限速) */

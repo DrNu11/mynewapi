@@ -108,6 +108,7 @@ export async function POST(req: NextRequest) {
         category: cat,
         rph,
         video_quota: 1,
+        video_bonus_quota: 0,
         pool,
         status: 'unused',
         created_at: now,

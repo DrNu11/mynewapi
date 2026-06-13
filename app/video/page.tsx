@@ -40,9 +40,8 @@ type AccountInfo = {
 };
 
 type QuotaState = {
-  quota_total: number;
-  quota_used: number;
-  quota_remaining: number;
+  base: { total: number; used: number; reserved: number; remaining: number } | null;
+  invite_bonus: { total: number; used: number; reserved: number; remaining: number } | null;
   global_quota_total: number;
   global_quota_used: number;
   global_quota_remaining: number;
@@ -84,6 +83,12 @@ export default function VideoPage() {
   const [globalQuotaLoading, setGlobalQuotaLoading] = useState(true);
   const [createdAt, setCreatedAt] = useState<number>(0);
   const [nowTick, setNowTick] = useState<number>(0);
+  const [inviteUrl, setInviteUrl] = useState('');
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteStats, setInviteStats] = useState<{
+    today_rewards: number; today_remaining: number; total_rewards: number;
+    pending_review: number; successful_invites: number; daily_cap_rejected: number;
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const firstFrameImage = useMemo(() => imageDataUrl || imageUrl.trim(), [imageDataUrl, imageUrl]);
@@ -217,6 +222,7 @@ export default function VideoPage() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
+          operation_id: crypto.randomUUID(),
           code: code.trim().toUpperCase(),
           prompt: prompt.trim(),
           first_frame_image: firstFrameImage,
@@ -232,11 +238,10 @@ export default function VideoPage() {
       }
       setTask(body.data);
       // 更新配额
-      if (body.data.quota_remaining !== undefined) {
+      if (body.data.base || body.data.invite_bonus) {
         setQuota({
-          quota_total: body.data.quota_total,
-          quota_used: body.data.quota_used,
-          quota_remaining: body.data.quota_remaining,
+          base: body.data.base,
+          invite_bonus: body.data.invite_bonus,
           global_quota_total: body.data.global_quota_total,
           global_quota_used: body.data.global_quota_used,
           global_quota_remaining: body.data.global_quota_remaining,
@@ -256,6 +261,23 @@ export default function VideoPage() {
     }
   }
 
+  async function getInviteLink() {
+    if (!code.trim() || code.trim().length < 8) return;
+    setInviteLoading(true);
+    try {
+      const res = await fetch('/api/invite/link', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ card_code: code.trim().toUpperCase() }),
+      });
+      const body = await res.json();
+      if (body?.data) {
+        setInviteUrl(body.data.invite_url);
+        setInviteStats(body.data);
+      }
+    } catch {} finally { setInviteLoading(false); }
+  }
+
   async function copyUrl() {
     if (!task?.download_url) return;
     await navigator.clipboard.writeText(task.download_url);
@@ -265,8 +287,14 @@ export default function VideoPage() {
 
   function quotaLabel(): { text: string; color: string } | null {
     if (!quota) return null;
-    if (quota.quota_remaining <= 0) return { text: '此卡次数已用完', color: 'text-red-400' };
-    return { text: `此卡剩余 ${quota.quota_remaining}/${quota.quota_total} 次`, color: 'text-brand-400' };
+    const baseRemain = quota.base?.remaining ?? 0;
+    const bonusRemain = quota.invite_bonus?.remaining ?? 0;
+    const totalRemain = baseRemain + bonusRemain;
+    if (totalRemain <= 0) return { text: '此卡次数已用完', color: 'text-red-400' };
+    if (quota.base && quota.invite_bonus) {
+      return { text: `可用 ${totalRemain} 次 (基础${baseRemain}+奖励${bonusRemain})`, color: 'text-brand-400' };
+    }
+    return { text: `此卡剩余 ${totalRemain} 次`, color: 'text-brand-400' };
   }
 
   function globalQuotaLabel(gq: GlobalQuotaState | null): { text: string; color: string } | null {
@@ -301,7 +329,7 @@ export default function VideoPage() {
               图生视频工作台
             </h1>
             <p className="mt-4 text-base text-slate-400 sm:text-lg">
-              仅限未激活卡密，每张卡密限 1 次，生成后仍可用于激活/续费
+              未激活卡密体验 1 次，激活后可用邀请奖励次数。邀请好友成功生成视频可获 +1 次，每日最多 3 次。
             </p>
 
             {/* 规则提示 */}
@@ -317,15 +345,11 @@ export default function VideoPage() {
                   <ul className="space-y-1.5 text-amber-200/80">
                     <li className="flex items-start gap-2">
                       <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-                      <span>仅<strong className="text-amber-100">未激活</strong>卡密可用于视频生成，已激活/过期/禁用卡密无法使用</span>
+                      <span><strong className="text-amber-100">未激活</strong>卡密可体验基础次数，<strong className="text-amber-100">已激活</strong>卡密可使用邀请奖励次数</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-                      <span>生成视频后卡密<strong className="text-amber-100">状态不变</strong>，仍可回到首页激活或一键续费</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-                      <span>每张卡密限生成 <strong className="text-amber-100">1 次</strong>视频，全局每日 <strong className="text-amber-100">{globalQuota?.global_quota_total ?? '—'}</strong> 次配额（北京 0 点重置）</span>
+                      <span>邀请好友成功生成视频，你获得 <strong className="text-amber-100">+1 次</strong>奖励，每日最多 <strong className="text-amber-100">3 次</strong></span>
                     </li>
                   </ul>
                 </div>
@@ -512,6 +536,42 @@ export default function VideoPage() {
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                   创建视频任务
                 </button>
+
+                {/* 邀请入口 */}
+                <div className="mt-4 rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
+                  <p className="text-xs font-medium text-violet-300">
+                    邀请好友成功生成视频，你可获得 +1 次奖励（每日最多 3 次）
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={getInviteLink}
+                      disabled={inviteLoading || code.trim().length < 8}
+                      className="flex items-center gap-1.5 rounded-lg bg-violet-500 px-3 py-2 text-xs font-medium text-white transition hover:bg-violet-600 disabled:cursor-not-allowed disabled:bg-slate-700"
+                    >
+                      {inviteLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ticket className="h-3.5 w-3.5" />}
+                      获取邀请链接
+                    </button>
+                    {inviteUrl && (
+                      <button
+                        type="button"
+                        onClick={() => { navigator.clipboard.writeText(inviteUrl); }}
+                        className="rounded-lg border border-slate-600 px-3 py-2 text-xs text-slate-300 hover:border-slate-400"
+                      >
+                        复制链接
+                      </button>
+                    )}
+                  </div>
+                  {inviteStats && (
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+                      <span>今日已获 {inviteStats.today_rewards}/3 次</span>
+                      <span>累计 {inviteStats.total_rewards} 次</span>
+                      {inviteStats.pending_review > 0 && (
+                        <span className="text-amber-400">{inviteStats.pending_review} 次待审核</span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </form>
             </section>
           </ScrollReveal>
