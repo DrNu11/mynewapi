@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCardByCode, getVideoTaskByTaskId } from '@/lib/db';
+import { getCardByCode, getVideoTaskByTaskId, checkRateLimit } from '@/lib/db';
 import { syncVideoTask } from '@/lib/video-sync';
+import { clientIp } from '@/lib/client-ip';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,12 @@ export async function POST(req: NextRequest) {
   if (!code || code.length < 8 || code.length > 32) return deny('请输入有效的卡密');
   if (!taskId) return deny('缺少 task_id');
 
+  // 限流: 每 IP 每分钟 ≤ 60
+  const ip = clientIp(req);
+  if (!checkRateLimit(`video-status:ip:${ip}`, 60, 60)) {
+    return deny('请求太频繁,请稍后再试', 429);
+  }
+
   const card = getCardByCode(code);
   if (!card) return deny('未找到该卡密', 404);
 
@@ -31,11 +38,7 @@ export async function POST(req: NextRequest) {
     return deny('无权查看该视频任务', 403);
   }
 
-  // 已经是终态且有下载地址,直接返回
-  if (task.download_url && task.status === 'Success') {
-    return NextResponse.json({ success: true, data: task });
-  }
-
-  const { task: updated, settled } = await syncVideoTask(taskId);
+  // 调用 syncVideoTask 进行状态同步和奖励结算(对终态幂等)
+  const { task: updated } = await syncVideoTask(taskId);
   return NextResponse.json({ success: true, data: updated });
 }

@@ -1,11 +1,15 @@
 import { createHmac, randomBytes } from 'crypto';
 
-/**
- * IP 和设备 ID 的 HMAC 哈希,数据库不存原始值。
- * RISK_HASH_SECRET 至少 32 字节,缺失时降级为不可逆确定性哈希。
- */
 function getSecret(): string {
-  return process.env.RISK_HASH_SECRET || 'nassa-cards-risk-hash-default-secret-min-32b';
+  const secret = process.env.RISK_HASH_SECRET;
+  if (secret) return secret;
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('RISK_HASH_SECRET is required in production');
+  }
+
+  console.warn('[risk-hash] RISK_HASH_SECRET not set, using fallback. Do NOT use in production.');
+  return 'nassa-cards-risk-hash-default-secret-min-32b';
 }
 
 export function hashIp(ip: string): string {

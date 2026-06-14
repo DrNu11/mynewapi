@@ -9,3 +9,8 @@ export function clientIp(req: NextRequest): string {
   if (xri) return xri.trim();
   return 'unknown';
 }
+
+/** 读取 device_id Cookie 明文值,用于风控哈希。 */
+export function deviceId(req: NextRequest): string | null {
+  return req.cookies.get('device_id')?.value || null;
+}

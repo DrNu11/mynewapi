@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCardByCode } from '@/lib/db';
+import { getCardByCode, checkRateLimit } from '@/lib/db';
 import { getInviteLinkByCardId, getInviteLinkStats } from '@/lib/invite-reward';
 
 export const runtime = 'nodejs';
@@ -16,6 +16,11 @@ export async function POST(req: NextRequest) {
   const code = (body.card_code || '').trim().toUpperCase();
   if (!code || code.length < 8 || code.length > 32) {
     return NextResponse.json({ success: false, message: '请输入有效的卡密' }, { status: 400 });
+  }
+
+  // 限流: 每卡每分钟 ≤ 20
+  if (!checkRateLimit(`invite-stats:card:${code}`, 20, 60)) {
+    return NextResponse.json({ success: false, message: '请求太频繁,请稍后再试' }, { status: 429 });
   }
 
   const card = getCardByCode(code);

@@ -81,6 +81,21 @@ export function createInviteLink(inviterCardId: number, ipHash: string | null, d
   return getInviteLinkByCode(inviteCode)!;
 }
 
+export function backfillInviteLinkRisk(linkId: number, ipHash: string | null, deviceHash: string | null): void {
+  const link = getInviteLinkById(linkId);
+  if (!link) return;
+
+  const now = Math.floor(Date.now() / 1000);
+  if (!link.creator_ip_hash && ipHash) {
+    db().prepare('UPDATE invite_links SET creator_ip_hash = ?, updated_at = ? WHERE id = ?')
+      .run(ipHash, now, linkId);
+  }
+  if (!link.creator_device_hash && deviceHash) {
+    db().prepare('UPDATE invite_links SET creator_device_hash = ?, updated_at = ? WHERE id = ?')
+      .run(deviceHash, now, linkId);
+  }
+}
+
 export function getInviteLinkStats(inviterCardId: number): {
   today_rewards: number;
   today_remaining: number;
@@ -205,10 +220,10 @@ export function insertRewardLedger(redemptionId: number, inviterCardId: number, 
 // ---- reward settlement ----
 
 /**
- * 视频任务成功后结算邀请奖励。
- * 必须在 IMMEDIATE 事务中调用。
+ * 视频任务成功后结算邀请奖励(内部实现,不加事务)。
+ * 调用方必须通过 settleInviteReward() 包装 IMMEDIATE 事务。
  */
-export function settleInviteReward(videoTaskId: number): { settled: boolean; outcome?: string } {
+function settleInviteRewardUnsafe(videoTaskId: number): { settled: boolean; outcome?: string } {
   const now = Math.floor(Date.now() / 1000);
 
   // 读取视频任务
@@ -311,4 +326,12 @@ export function settleInviteReward(videoTaskId: number): { settled: boolean; out
   updateAttributionOutcome(attr.id, 'granted');
 
   return { settled: true, outcome: 'granted' };
+}
+
+/** 公开入口: IMMEDIATE 事务内完成全部结算 */
+export function settleInviteReward(videoTaskId: number): { settled: boolean; outcome?: string } {
+  const tx = db().transaction(() => {
+    return settleInviteRewardUnsafe(videoTaskId);
+  });
+  return tx.immediate() as { settled: boolean; outcome?: string };
 }
