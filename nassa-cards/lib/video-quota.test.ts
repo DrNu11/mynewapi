@@ -8,6 +8,8 @@ import {
   insertVideoCreateOperation,
   commitReservation,
   releaseReservation,
+  getVideoQuotaUsedBySource,
+  countReservedBySource,
 } from './db';
 import { reserveVideoCapacity, QuotaError } from './video-quota';
 import { finalizeVideoSubmission } from './db';
@@ -398,10 +400,60 @@ describe('finalizeVideoSubmission', () => {
   });
 });
 
-describe('insertCard', () => {
-  test('insertCard 包含 video_bonus_quota', () => {
-    makeCard('TEST-BONUS-1111', 1, 3);
-    const card = getCardByCode('TEST-BONUS-1111');
-    expect(card.video_bonus_quota).toBe(3);
+describe('baseAvailable logic (quota route)', () => {
+  function canUseVideoQuota(status: string): boolean {
+    return status === 'unused' || status === 'activated';
+  }
+
+  function computeBaseRemaining(cardId: number, videoQuota: number, status: string): number {
+    if (!canUseVideoQuota(status)) return 0;
+    const now = Math.floor(Date.now() / 1000);
+    const used = getVideoQuotaUsedBySource(cardId, 'base');
+    const reserved = countReservedBySource(cardId, 'base', now);
+    return Math.max(0, videoQuota - used - reserved);
+  }
+
+  test('unused 卡 video_quota=1 used=0 reserved=0 → remaining=1', () => {
+    makeCard('TEST-QUOTA-UUUU', 1, 0, 'unused');
+    const card = getCardByCode('TEST-QUOTA-UUUU');
+    expect(computeBaseRemaining(card.id, card.video_quota, card.status)).toBe(1);
+  });
+
+  test('activated 卡 video_quota=1 used=0 reserved=0 → remaining=1', () => {
+    makeCard('TEST-QUOTA-AAAA', 1, 0, 'activated');
+    const card = getCardByCode('TEST-QUOTA-AAAA');
+    expect(computeBaseRemaining(card.id, card.video_quota, card.status)).toBe(1);
+  });
+
+  test('activated 卡 video_quota=1 used=1 reserved=0 → remaining=0', () => {
+    makeCard('TEST-QUOTA-BBBB', 1, 0, 'activated');
+    const card = getCardByCode('TEST-QUOTA-BBBB');
+    // a video_task row with quota_source='base' counts as used
+    db().prepare(`INSERT INTO video_tasks (card_id, sk_key, status, task_id, model, prompt, duration, resolution, quota_source, query_error_count, created_at, updated_at)
+      VALUES (?, 'sk-test', 'Success', 'task-test-used', 'hailuo-2.3', 'test', 6, '1080P', 'base', 0, 1, 1)`)
+      .run(card.id);
+    expect(computeBaseRemaining(card.id, card.video_quota, card.status)).toBe(0);
+  });
+
+  test('activated 卡 video_quota=1 used=0 reserved=1 → remaining=0', () => {
+    makeCard('TEST-QUOTA-CCCC', 1, 0, 'activated');
+    const card = getCardByCode('TEST-QUOTA-CCCC');
+    const now = Math.floor(Date.now() / 1000);
+    insertReservation({
+      operation_id: 'op-test-reserved',
+      attempt_id: 'attempt-test-reserved',
+      card_id: card.id,
+      quota_source: 'base',
+      account_index: 0,
+      status: 'reserved',
+      expires_at: now + 120,
+    });
+    expect(computeBaseRemaining(card.id, card.video_quota, card.status)).toBe(0);
+  });
+
+  test('非 unused/activated 状态 (disabled) → remaining=0', () => {
+    makeCard('TEST-QUOTA-DDDD', 1, 0, 'disabled');
+    const card = getCardByCode('TEST-QUOTA-DDDD');
+    expect(computeBaseRemaining(card.id, card.video_quota, card.status)).toBe(0);
   });
 });

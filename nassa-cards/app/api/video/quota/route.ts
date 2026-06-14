@@ -61,10 +61,9 @@ export async function GET(req: NextRequest) {
   const baseReserved = countReservedBySource(card.id, 'base', now);
   const bonusReserved = countReservedBySource(card.id, 'invite_bonus', now);
 
-  const baseAvailable = card.status === 'unused' ? Math.max(0, card.video_quota - baseUsed - baseReserved) : 0;
-  const bonusAvailable = (card.status === 'unused' || card.status === 'activated')
-    ? Math.max(0, card.video_bonus_quota - bonusUsed - bonusReserved)
-    : 0;
+  const canUseVideoQuota = card.status === 'unused' || card.status === 'activated';
+  const baseAvailable = canUseVideoQuota ? Math.max(0, card.video_quota - baseUsed - baseReserved) : 0;
+  const bonusAvailable = canUseVideoQuota ? Math.max(0, card.video_bonus_quota - bonusUsed - bonusReserved) : 0;
 
   return NextResponse.json({
     success: true,

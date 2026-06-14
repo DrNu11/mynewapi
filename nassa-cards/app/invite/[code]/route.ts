@@ -13,6 +13,8 @@ export async function GET(
 ) {
   const inviteCode = params.code;
 
+  const baseUrl = process.env.PUBLIC_API_BASE_ROOT || req.nextUrl.origin;
+
   // 限流: 每 IP 每分钟 ≤ 30
   const ip = clientIp(req);
   if (!checkRateLimit(`invite-visit:ip:${ip}`, 30, 60)) {
@@ -21,13 +23,13 @@ export async function GET(
 
   const link = getInviteLinkByCode(inviteCode);
   if (!link || link.status !== 'active') {
-    return NextResponse.redirect(new URL('/video', req.url));
+    return NextResponse.redirect(new URL('/video', baseUrl));
   }
 
   // 首次有效归因优先: 检查是否已有未过期 visit cookie
   const existingCookie = req.cookies.get('invite_visit');
   if (existingCookie?.value) {
-    return NextResponse.redirect(new URL('/video', req.url));
+    return NextResponse.redirect(new URL('/video', baseUrl));
   }
 
   // 创建新 visit
@@ -45,7 +47,7 @@ export async function GET(
   createVisit(link.id, tokenHash, ipHash, deviceHash);
 
   const cookieSecure = process.env.COOKIE_SECURE !== 'false';
-  const redirect = NextResponse.redirect(new URL('/video', req.url));
+  const redirect = NextResponse.redirect(new URL('/video', baseUrl));
   redirect.cookies.set('invite_visit', token, {
     httpOnly: true,
     secure: cookieSecure,
