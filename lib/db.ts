@@ -14,6 +14,7 @@ export function db(): Database.Database {
   const inst = new Database(DB_PATH);
   inst.pragma('journal_mode = WAL');
   inst.pragma('foreign_keys = ON');
+  inst.pragma('busy_timeout = 5000');
   init(inst);
   _db = inst;
   return inst;
@@ -182,6 +183,21 @@ function init(inst: Database.Database) {
     FOREIGN KEY (video_task_id) REFERENCES video_tasks(id)
   )`);
   inst.exec('CREATE INDEX IF NOT EXISTS idx_vco_card_status ON video_create_operations(card_id, status, created_at)');
+
+  // video_create_operations 增量迁移
+  const vcoCols = inst.prepare('PRAGMA table_info(video_create_operations)').all() as Array<{ name: string }>;
+  if (!vcoCols.some((c) => c.name === 'upstream_task_id')) {
+    inst.exec('ALTER TABLE video_create_operations ADD COLUMN upstream_task_id TEXT');
+  }
+  if (!vcoCols.some((c) => c.name === 'upstream_account_index')) {
+    inst.exec('ALTER TABLE video_create_operations ADD COLUMN upstream_account_index INTEGER');
+  }
+  if (!vcoCols.some((c) => c.name === 'reservation_id')) {
+    inst.exec('ALTER TABLE video_create_operations ADD COLUMN reservation_id INTEGER');
+  }
+  if (!vcoCols.some((c) => c.name === 'recovery_payload_json')) {
+    inst.exec('ALTER TABLE video_create_operations ADD COLUMN recovery_payload_json TEXT');
+  }
 
   // video_quota_reservations: 额度预占
   inst.exec(`CREATE TABLE IF NOT EXISTS video_quota_reservations (
@@ -403,8 +419,8 @@ export function releaseCardClaim(code: string): void {
 
 export function insertCard(row: Omit<Card, 'id'>): number {
   const stmt = db().prepare(`
-    INSERT INTO cards (code, plan, plan_days, category, rph, video_quota, pool, status, created_at, activated_at, expires_at, newapi_user_id, newapi_token_id, newapi_token_key, activator_ip, disable_reason, notes)
-    VALUES (@code, @plan, @plan_days, @category, @rph, @video_quota, @pool, @status, @created_at, @activated_at, @expires_at, @newapi_user_id, @newapi_token_id, @newapi_token_key, @activator_ip, @disable_reason, @notes)
+    INSERT INTO cards (code, plan, plan_days, category, rph, video_quota, video_bonus_quota, pool, status, created_at, activated_at, expires_at, newapi_user_id, newapi_token_id, newapi_token_key, activator_ip, disable_reason, notes)
+    VALUES (@code, @plan, @plan_days, @category, @rph, @video_quota, @video_bonus_quota, @pool, @status, @created_at, @activated_at, @expires_at, @newapi_user_id, @newapi_token_id, @newapi_token_key, @activator_ip, @disable_reason, @notes)
   `);
   const info = stmt.run(row);
   return info.lastInsertRowid as number;
@@ -576,7 +592,10 @@ export function countAccountUsageToday(accountIndex: number, since: number, now:
     .get(accountIndex, since) as { c: number }).c;
   const reservations = (db()
     .prepare(`SELECT COUNT(*) as c FROM video_quota_reservations
-      WHERE account_index = ? AND status IN ('reserved', 'uncertain') AND expires_at > ?`)
+      WHERE account_index = ? AND (
+        (status = 'reserved' AND expires_at > ?)
+        OR status = 'uncertain'
+      )`)
     .get(accountIndex, now) as { c: number }).c;
   return tasks + reservations;
 }
@@ -591,6 +610,10 @@ export interface VideoCreateOperation {
   status: string;
   video_task_id: number | null;
   last_error: string | null;
+  upstream_task_id: string | null;
+  upstream_account_index: number | null;
+  reservation_id: number | null;
+  recovery_payload_json: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -659,6 +682,21 @@ export function markReservationUncertain(attemptId: string): void {
     .run(attemptId);
 }
 
+/** 获取某个 operation_id 下当前 active 的 reservation (reserved/uncertain/committed) */
+export function getActiveReservationByOperationId(operationId: string): VideoQuotaReservation | null {
+  return (db().prepare(
+    "SELECT * FROM video_quota_reservations WHERE operation_id = ? AND status IN ('reserved', 'uncertain', 'committed') ORDER BY created_at DESC LIMIT 1"
+  ).get(operationId) as VideoQuotaReservation) || null;
+}
+
+/** 列出某个 operation_id 已经尝试过的所有 account_index */
+export function listAttemptedAccountIndexes(operationId: string): number[] {
+  const rows = db().prepare(
+    'SELECT DISTINCT account_index FROM video_quota_reservations WHERE operation_id = ?'
+  ).all(operationId) as Array<{ account_index: number }>;
+  return rows.map((r) => r.account_index);
+}
+
 export function releaseExpiredReservations(now: number): number {
   const info = db().prepare("UPDATE video_quota_reservations SET status = 'released', released_at = ?, release_reason = 'expired' WHERE status = 'reserved' AND expires_at <= ?")
     .run(now, now);
@@ -686,9 +724,187 @@ export function getUncertainOperations(): VideoCreateOperation[] {
     .all() as VideoCreateOperation[];
 }
 
+/** 查出 Success + pending attribution 的任务,供 reconcile 补偿结算 */
+export function getPendingInviteSettlementTasks(limit = 50): VideoTask[] {
+  return db()
+    .prepare(
+      `SELECT vt.* FROM video_tasks vt
+       INNER JOIN invite_attributions ia ON ia.video_task_id = vt.id
+       WHERE vt.status = 'Success' AND ia.status = 'pending'
+       ORDER BY vt.created_at ASC LIMIT ?`
+    )
+    .all(limit) as VideoTask[];
+}
+
 /** 按 operation_id 查 video_task */
 export function getVideoTaskByOperationId(opId: string): VideoTask | null {
   return (db().prepare('SELECT * FROM video_tasks WHERE operation_id = ?').get(opId) as VideoTask) || null;
+}
+
+/**
+ * 原子落库: insert task + commit reservation + update operation。
+ * IMMEDIATE 事务保证三者同时成功或全部回滚。
+ * 如果 operation_id 已有 task,直接返回已有 task,不重复创建。
+ */
+export function finalizeVideoSubmission(taskRow: Omit<VideoTask, 'id' | 'created_at' | 'updated_at'>, reservationId: number): VideoTask {
+  return db().transaction(() => {
+    // 幂等: 已有 task 直接返回
+    const existing = getVideoTaskByOperationId(taskRow.operation_id!);
+    if (existing) return existing;
+
+    const task = insertVideoTask(taskRow);
+
+    // 必须带 WHERE status='reserved' + 交叉校验防止错用 reservation
+    const now = Math.floor(Date.now() / 1000);
+    const res = db().prepare(
+      `UPDATE video_quota_reservations SET status = 'committed', committed_at = ?
+       WHERE id = ? AND status = 'reserved'
+       AND operation_id = ? AND card_id = ? AND account_index = ? AND quota_source = ?`
+    ).run(now, reservationId, taskRow.operation_id!, taskRow.card_id, taskRow.account_index, taskRow.quota_source);
+    if (res.changes !== 1) throw new Error('reservation commit failed: not in reserved state or fields mismatch');
+
+    updateVideoCreateOperation(taskRow.operation_id!, { status: 'submitted', video_task_id: task.id });
+
+    return task;
+  }).immediate() as VideoTask;
+}
+
+/**
+ * 原子操作: 同时设置 operation 和 reservation 为 uncertain，记录上游恢复信息。
+ * 替代分开调用 recordRecoverableUncertainSubmission() + markReservationUncertain()。
+ */
+export function markSubmissionUncertain(opId: string, attemptId: string, data: {
+  upstream_task_id: string;
+  upstream_account_index: number;
+  reservation_id: number;
+  recovery_payload_json: string;
+}): void {
+  return db().transaction(() => {
+    const now = Math.floor(Date.now() / 1000);
+
+    db().prepare(
+      `UPDATE video_create_operations SET
+        status = 'uncertain',
+        upstream_task_id = ?,
+        upstream_account_index = ?,
+        reservation_id = ?,
+        recovery_payload_json = ?,
+        last_error = ?,
+        updated_at = ?
+      WHERE operation_id = ?`
+    ).run(
+      data.upstream_task_id,
+      data.upstream_account_index,
+      data.reservation_id,
+      data.recovery_payload_json,
+      '本地落库失败: MiniMax已返回task_id但DB写入失败',
+      now,
+      opId,
+    );
+
+    db().prepare(
+      "UPDATE video_quota_reservations SET status = 'uncertain' WHERE attempt_id = ?"
+    ).run(attemptId);
+  }).immediate();
+}
+
+/**
+ * MiniMax 已返回 task_id 但本地 DB 落库失败时,保存上游信息供 reconcile 恢复。
+ * recovery_payload_json 仅保存 model/prompt/duration/resolution/quota_source,不保存图片 Data URL。
+ * @deprecated 请使用原子函数 markSubmissionUncertain()
+ */
+export function recordRecoverableUncertainSubmission(opId: string, data: {
+  upstream_task_id: string;
+  upstream_account_index: number;
+  reservation_id: number;
+  recovery_payload_json: string;
+}): void {
+  const now = Math.floor(Date.now() / 1000);
+  db().prepare(
+    `UPDATE video_create_operations SET
+      status = 'uncertain',
+      upstream_task_id = ?,
+      upstream_account_index = ?,
+      reservation_id = ?,
+      recovery_payload_json = ?,
+      last_error = ?,
+      updated_at = ?
+    WHERE operation_id = ?`
+  ).run(
+    data.upstream_task_id,
+    data.upstream_account_index,
+    data.reservation_id,
+    data.recovery_payload_json,
+    '本地落库失败: MiniMax已返回task_id但DB写入失败',
+    now,
+    opId,
+  );
+}
+
+/** 查出 uncertain 且 upstream_task_id 非空的 operation,供 reconcile 自动恢复 */
+export function getRecoverableUncertainOperations(limit = 50): VideoCreateOperation[] {
+  return db()
+    .prepare(
+      `SELECT * FROM video_create_operations
+       WHERE status = 'uncertain' AND upstream_task_id IS NOT NULL
+       ORDER BY created_at ASC LIMIT ?`
+    )
+    .all(limit) as VideoCreateOperation[];
+}
+
+/**
+ * 从 uncertain operation 恢复: 补写 video_tasks,commit reservation,set operation→submitted。
+ * IMMEDIATE 事务,已恢复过的 operation 幂等返回已有 task。
+ */
+export function recoverUncertainSubmission(opId: string): VideoTask {
+  return db().transaction(() => {
+    // 幂等: 已有 task 直接返回
+    const existing = getVideoTaskByOperationId(opId);
+    if (existing) return existing;
+
+    const op = db().prepare('SELECT * FROM video_create_operations WHERE operation_id = ?').get(opId) as VideoCreateOperation | undefined;
+    if (!op || op.status !== 'uncertain' || !op.upstream_task_id) {
+      throw new Error('Operation not recoverable');
+    }
+
+    const card = db().prepare('SELECT * FROM cards WHERE id = ?').get(op.card_id) as Card | undefined;
+    if (!card) throw new Error('Card not found for recovery');
+
+    const payload = JSON.parse(op.recovery_payload_json!);
+
+    const task = insertVideoTask({
+      task_id: op.upstream_task_id!,
+      card_id: op.card_id,
+      sk_key: card.newapi_token_key || card.code,
+      model: payload.model,
+      prompt: payload.prompt,
+      duration: payload.duration,
+      resolution: payload.resolution,
+      status: 'Submitted',
+      file_id: null,
+      download_url: null,
+      error_message: null,
+      account_index: op.upstream_account_index!,
+      quota_source: payload.quota_source,
+      reservation_id: op.reservation_id,
+      operation_id: opId,
+      last_query_error: null,
+      query_error_count: 0,
+      last_queried_at: null,
+    });
+
+    const now = Math.floor(Date.now() / 1000);
+    const res = db().prepare(
+      `UPDATE video_quota_reservations SET status = 'committed', committed_at = ?
+       WHERE id = ? AND status = 'uncertain'
+       AND operation_id = ? AND card_id = ? AND account_index = ? AND quota_source = ?`
+    ).run(now, op.reservation_id, opId, op.card_id, op.upstream_account_index, payload.quota_source);
+    if (res.changes !== 1) throw new Error('recovery reservation commit failed');
+
+    updateVideoCreateOperation(opId, { status: 'submitted', video_task_id: task.id });
+
+    return task;
+  }).immediate() as VideoTask;
 }
 
 /** 近 N 秒内 sk-key 请求数(滑动窗口,保留备用;不再用于 RPH 限速) */

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { commitReservation, getAccountVideoCounts, getCardByCode, getVideoCreateOperation, getVideoQuotaUsedBySource, insertVideoTask, markExpiredCards, markReservationUncertain, releaseExpiredReservations, releaseReservation, updateVideoCreateOperation, todayStartSeconds } from '@/lib/db';
+import { finalizeVideoSubmission, getAccountVideoCounts, getCardByCode, getVideoQuotaUsedBySource, markExpiredCards, markReservationUncertain, markSubmissionUncertain, releaseReservation, updateVideoCreateOperation, checkRateLimit } from '@/lib/db';
 import {
   createHailuoVideoTask,
   getAccountsTotalQuota,
@@ -9,9 +9,11 @@ import {
   isHailuoResolution,
 } from '@/lib/minimax-video';
 import { reserveVideoCapacity, type ReservationResult, QuotaError } from '@/lib/video-quota';
+import { isRateLimitError, isNetworkError } from '@/lib/video-errors';
 import { createHash } from 'crypto';
 import { getVisitByTokenHash, insertAttribution, getInviteLinkById } from '@/lib/invite-reward';
 import { hashToken } from '@/lib/risk-hash';
+import { clientIp } from '@/lib/client-ip';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +32,7 @@ function deny(message: string, status = 400) {
 function payloadHash(args: Record<string, unknown>): string {
   return createHash('sha256').update(JSON.stringify(args)).digest('hex').slice(0, 16);
 }
+
 
 export async function POST(req: NextRequest) {
   let body: {
@@ -57,6 +60,15 @@ export async function POST(req: NextRequest) {
 
   if (!operationId) return deny('缺少 operation_id');
   if (!code || code.length < 8 || code.length > 32) return deny('请输入有效的卡密');
+
+  // 限流: 每 IP 每分钟 ≤ 5, 每卡每分钟 ≤ 3
+  const ip = clientIp(req);
+  if (!checkRateLimit(`video-create:ip:${ip}`, 5, 60)) {
+    return deny('请求太频繁,请稍后再试', 429);
+  }
+  if (!checkRateLimit(`video-create:card:${code}`, 3, 60)) {
+    return deny('请求太频繁,请稍后再试', 429);
+  }
   if (!prompt || prompt.length > MAX_PROMPT_LEN) return deny(`提示词长度需为 1-${MAX_PROMPT_LEN} 字符`);
   if (!firstFrameImage || firstFrameImage.length > MAX_IMAGE_LEN || !validImageRef(firstFrameImage)) {
     return deny('首帧图片需为 http(s) 图片 URL 或 PNG/JPEG/WebP Data URL');
@@ -71,14 +83,10 @@ export async function POST(req: NextRequest) {
 
   const hash = payloadHash({ code, prompt, firstFrameImage, model, duration, resolution });
 
-  // Phase 1: 预占
+  // Phase 1: 首次预占
   let reservation: ReservationResult;
   try {
-    reservation = reserveVideoCapacity({
-      operationId,
-      cardId: card.id,
-      payloadHash: hash,
-    });
+    reservation = reserveVideoCapacity({ operationId, cardId: card.id, payloadHash: hash });
   } catch (e: any) {
     if (e instanceof QuotaError) {
       if (e.code === 'DUPLICATE_OPERATION') {
@@ -92,86 +100,55 @@ export async function POST(req: NextRequest) {
     return deny(e?.message || '预占失败', 500);
   }
 
-  // Phase 2: 调用 MiniMax(在事务外)
-  let created: { taskId: string; accountIndex: number };
-  try {
-    created = await createHailuoVideoTask({
-      model: model as any,
-      prompt,
-      firstFrameImage,
-      duration: duration as any,
-      resolution: resolution as any,
-      accountIndex: reservation.accountIndex,
-    });
-  } catch (e: any) {
-    const msg = e?.message || String(e);
-    const isRateLimit =
-      e?.httpStatus === 429 ||
-      e?.apiStatusCode === 1004 ||
-      msg.includes('rate') ||
-      msg.includes('Rate') ||
-      msg.includes('limit') ||
-      msg.includes('quota') ||
-      msg.includes('Quota') ||
-      msg.includes('exceeded');
+  // Phase 2: 循环调用 MiniMax — 覆盖 reserve + create, 最多尝试账号数量次
+  let created: { taskId: string; accountIndex: number } | null = null;
 
-    if (isRateLimit) {
-      // 释放当前 attempt,切换其他账号重试
-      releaseReservation(reservation.attemptId, 'rate_limited');
-      updateVideoCreateOperation(operationId, { status: 'pending', last_error: `限流: ${msg}` });
+  for (let attempt = 0; attempt < HAILUO_ACCOUNTS.length; attempt++) {
+    try {
+      created = await createHailuoVideoTask({
+        model: model as any,
+        prompt,
+        firstFrameImage,
+        duration: duration as any,
+        resolution: resolution as any,
+        accountIndex: reservation.accountIndex,
+      });
+      break; // 成功,退出循环
+    } catch (e: any) {
+      const msg = e?.message || String(e);
 
-      // 最多尝试账号数量次
-      let retryResult: ReservationResult | null = null;
-      const triedIndexes = [reservation.accountIndex];
-      for (let i = 0; i < HAILUO_ACCOUNTS.length; i++) {
+      // 网络超时/中断 → uncertain,立即返回
+      if (isNetworkError(e)) {
+        markReservationUncertain(reservation.attemptId);
+        updateVideoCreateOperation(operationId, { status: 'uncertain', last_error: msg });
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'SUBMISSION_UNCERTAIN',
+            message: '提交结果正在确认，请勿重复提交。若长时间未恢复，请联系管理员处理。',
+            data: { operation_id: operationId },
+          },
+          { status: 202 },
+        );
+      }
+
+      if (isRateLimitError(e)) {
+        // 释放当前 attempt,尝试下一个账号
+        releaseReservation(reservation.attemptId, 'rate_limited');
+        updateVideoCreateOperation(operationId, { status: 'pending', last_error: `限流: ${msg}` });
+
+        // 预占下一个未尝试账号 (reserveVideoCapacity 自动排除已尝试账号)
         try {
-          retryResult = reserveVideoCapacity({
-            operationId,
-            cardId: card.id,
-            payloadHash: hash,
-            excludedAccountIndexes: triedIndexes,
-          });
-          break;
+          reservation = reserveVideoCapacity({ operationId, cardId: card.id, payloadHash: hash });
         } catch (re: any) {
           if (re instanceof QuotaError && re.code === 'DUPLICATE_OPERATION') break;
-          // 继续尝试下一个账号
+          // 无更多可用账号
+          updateVideoCreateOperation(operationId, { status: 'failed', last_error: '所有账号均限流或配额不足' });
+          return deny('所有海螺账号均不可用,请稍后重试', 429);
         }
+        continue; // 用新账号重试
       }
 
-      if (!retryResult) {
-        updateVideoCreateOperation(operationId, { status: 'failed', last_error: '所有账号均限流或配额不足' });
-        return deny('所有海螺账号均不可用,请稍后重试', 429);
-      }
-
-      reservation = retryResult;
-      try {
-        created = await createHailuoVideoTask({
-          model: model as any,
-          prompt,
-          firstFrameImage,
-          duration: duration as any,
-          resolution: resolution as any,
-          accountIndex: reservation.accountIndex,
-        });
-      } catch (e2: any) {
-        releaseReservation(reservation.attemptId, 'retry_failed');
-        updateVideoCreateOperation(operationId, { status: 'failed', last_error: `重试失败: ${e2?.message || e2}` });
-        return deny(e2?.message || '创建视频任务失败', 502);
-      }
-    } else if (msg.includes('timeout') || msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT') || msg.includes('abort')) {
-      // 网络超时 → uncertain
-      markReservationUncertain(reservation.attemptId);
-      updateVideoCreateOperation(operationId, { status: 'uncertain', last_error: msg });
-      return NextResponse.json(
-        {
-          success: false,
-          code: 'SUBMISSION_UNCERTAIN',
-          message: '提交结果正在确认，请勿重复提交。若长时间未恢复，请联系管理员处理。',
-          data: { operation_id: operationId },
-        },
-        { status: 202 },
-      );
-    } else {
       // 明确失败,释放预占
       releaseReservation(reservation.attemptId, `upstream_error: ${msg}`);
       updateVideoCreateOperation(operationId, { status: 'failed', last_error: msg });
@@ -179,31 +156,58 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Phase 3: 明确成功 → 落库 + commit
-  const taskRow = {
-    task_id: created.taskId,
-    card_id: card.id,
-    sk_key: card.newapi_token_key || code,
-    model,
-    prompt,
-    duration,
-    resolution,
-    status: 'Submitted',
-    file_id: null,
-    download_url: null,
-    error_message: null,
-    account_index: created.accountIndex,
-    quota_source: reservation.quotaSource,
-    reservation_id: reservation.reservationId,
-    operation_id: operationId,
-    last_query_error: null,
-    query_error_count: 0,
-    last_queried_at: null,
-  };
+  if (!created) {
+    updateVideoCreateOperation(operationId, { status: 'failed', last_error: '所有账号均限流或配额不足' });
+    return deny('所有海螺账号均不可用,请稍后重试', 429);
+  }
 
-  const task = insertVideoTask(taskRow);
-  commitReservation(reservation.reservationId);
-  updateVideoCreateOperation(operationId, { status: 'submitted', video_task_id: task.id });
+  // Phase 3: 明确成功 → 原子落库
+  let task: Awaited<ReturnType<typeof finalizeVideoSubmission>>;
+  try {
+    task = finalizeVideoSubmission({
+      task_id: created.taskId,
+      card_id: card.id,
+      sk_key: card.newapi_token_key || code,
+      model,
+      prompt,
+      duration,
+      resolution,
+      status: 'Submitted',
+      file_id: null,
+      download_url: null,
+      error_message: null,
+      account_index: created.accountIndex,
+      quota_source: reservation.quotaSource,
+      reservation_id: reservation.reservationId,
+      operation_id: operationId,
+      last_query_error: null,
+      query_error_count: 0,
+      last_queried_at: null,
+    }, reservation.reservationId);
+  } catch (e: any) {
+    // MiniMax 已返回 task_id 但本地 DB 落库失败 → 原子保存恢复信息
+    markSubmissionUncertain(operationId, reservation.attemptId, {
+      upstream_task_id: created.taskId,
+      upstream_account_index: created.accountIndex,
+      reservation_id: reservation.reservationId,
+      recovery_payload_json: JSON.stringify({
+        model,
+        prompt,
+        duration,
+        resolution,
+        quota_source: reservation.quotaSource,
+      }),
+    });
+    return NextResponse.json(
+      {
+        success: false,
+        code: 'SUBMISSION_UNCERTAIN',
+        message: '提交结果正在确认，请勿重复提交。若长时间未恢复，请联系管理员处理。',
+        data: { operation_id: operationId },
+      },
+      { status: 202 },
+    );
+  }
 
   // 尝试写邀请归因(失败不阻断视频生成)
   try {
@@ -224,12 +228,12 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-  } catch {}
+  } catch (e) {
+    console.error('[invite] attribution insert failed', e);
+  }
 
-  const now = Math.floor(Date.now() / 1000);
   const baseUsed = getVideoQuotaUsedBySource(card.id, 'base');
   const bonusUsed = getVideoQuotaUsedBySource(card.id, 'invite_bonus');
-
   const counts = getAccountVideoCounts();
   const totalQuota = getAccountsTotalQuota();
   const globalUsed = counts ? Object.values(counts).reduce((s, c) => s + c, 0) : 0;

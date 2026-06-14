@@ -9,14 +9,17 @@ import {
 import {
   countAccountUsageToday,
   countReservedBySource,
+  getActiveReservationByOperationId,
   getCardForUpdate,
   getVideoCreateOperation,
   getVideoQuotaUsedBySource,
   insertReservation,
   insertVideoCreateOperation,
+  listAttemptedAccountIndexes,
   releaseExpiredReservations,
   markExpiredCards,
   todayStartSeconds,
+  db,
 } from '@/lib/db';
 import type { Card } from '@/lib/db';
 
@@ -42,27 +45,14 @@ export class QuotaError extends Error {
   }
 }
 
-function chooseQuotaSource(card: Card, now: number): string | null {
-  if (card.status === 'unused') {
-    const baseUsed = getVideoQuotaUsedBySource(card.id, 'base');
-    const baseReserved = countReservedBySource(card.id, 'base', now);
-    if (baseUsed + baseReserved < card.video_quota) return 'base';
-  }
-  // bonus 在 unused 和 activated 状态下都可用
-  if (card.status === 'unused' || card.status === 'activated') {
-    const bonusUsed = getVideoQuotaUsedBySource(card.id, 'invite_bonus');
-    const bonusReserved = countReservedBySource(card.id, 'invite_bonus', now);
-    if (bonusUsed + bonusReserved < card.video_bonus_quota) return 'invite_bonus';
-  }
-  return null;
-}
-
-export function reserveVideoCapacity(args: {
+interface ReserveInput {
   operationId: string;
   cardId: number;
   payloadHash: string;
   excludedAccountIndexes?: number[];
-}): ReservationResult {
+}
+
+function reserveUnsafe(args: ReserveInput): ReservationResult {
   const now = Math.floor(Date.now() / 1000);
   releaseExpiredReservations(now);
   markExpiredCards();
@@ -89,8 +79,15 @@ export function reserveVideoCapacity(args: {
     if (existing.payload_hash !== args.payloadHash) {
       throw new QuotaError('幂等键冲突:请勿复用 operation_id', 'IDEMPOTENT_CONFLICT', 409);
     }
-    // 已有相同 operation: 返回已有状态
-    throw new QuotaError('请求已提交,请勿重复操作', 'DUPLICATE_OPERATION', 409);
+    // 如果已完成(非 pending),直接拒绝
+    if (existing.status !== 'pending') {
+      throw new QuotaError('请求已提交,请勿重复操作', 'DUPLICATE_OPERATION', 409);
+    }
+    // status = 'pending' 且无 active reservation → 允许重试(切换账号)
+    const activeReservation = getActiveReservationByOperationId(args.operationId);
+    if (activeReservation) {
+      throw new QuotaError('请求已提交,请勿重复操作', 'DUPLICATE_OPERATION', 409);
+    }
   }
 
   const quotaSource = chooseQuotaSource(card, now);
@@ -99,11 +96,15 @@ export function reserveVideoCapacity(args: {
   }
 
   const since = todayStartSeconds();
-  const excludedIndexes = args.excludedAccountIndexes ?? [];
+  // 自动排除已经尝试过的账号 + 调用方指定的排除列表
+  const explicitExcluded = args.excludedAccountIndexes ?? [];
+  const alreadyTried = existing ? listAttemptedAccountIndexes(args.operationId) : [];
+  const excludeSet = new Set([...explicitExcluded, ...alreadyTried]);
+
   let accountIndex: number | null = null;
 
   for (const acc of HAILUO_ACCOUNTS) {
-    if (excludedIndexes.includes(acc.index)) continue;
+    if (excludeSet.has(acc.index)) continue;
     const used = countAccountUsageToday(acc.index, since, now);
     if (used < acc.quota) {
       accountIndex = acc.index;
@@ -120,12 +121,14 @@ export function reserveVideoCapacity(args: {
     );
   }
 
-  // 写 operation
-  insertVideoCreateOperation({
-    operation_id: args.operationId,
-    card_id: card.id,
-    payload_hash: args.payloadHash,
-  });
+  // 只在首次写 operation
+  if (!existing) {
+    insertVideoCreateOperation({
+      operation_id: args.operationId,
+      card_id: card.id,
+      payload_hash: args.payloadHash,
+    });
+  }
 
   // 写 reservation
   const attemptId = crypto.randomUUID();
@@ -147,4 +150,26 @@ export function reserveVideoCapacity(args: {
     accountIndex,
     card,
   };
+}
+
+export function reserveVideoCapacity(args: ReserveInput): ReservationResult {
+  const tx = db().transaction(() => {
+    return reserveUnsafe(args);
+  });
+  return tx.immediate() as ReservationResult;
+}
+
+function chooseQuotaSource(card: Card, now: number): string | null {
+  if (card.status === 'unused') {
+    const baseUsed = getVideoQuotaUsedBySource(card.id, 'base');
+    const baseReserved = countReservedBySource(card.id, 'base', now);
+    if (baseUsed + baseReserved < card.video_quota) return 'base';
+  }
+  // bonus 在 unused 和 activated 状态下都可用
+  if (card.status === 'unused' || card.status === 'activated') {
+    const bonusUsed = getVideoQuotaUsedBySource(card.id, 'invite_bonus');
+    const bonusReserved = countReservedBySource(card.id, 'invite_bonus', now);
+    if (bonusUsed + bonusReserved < card.video_bonus_quota) return 'invite_bonus';
+  }
+  return null;
 }

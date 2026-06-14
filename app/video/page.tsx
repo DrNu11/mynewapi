@@ -77,6 +77,9 @@ export default function VideoPage() {
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [operationId, setOperationId] = useState<string | null>(null);
+  const [submissionUncertain, setSubmissionUncertain] = useState(false);
+  const [operationPolling, setOperationPolling] = useState(false);
   const [quota, setQuota] = useState<QuotaState | null>(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
   const [globalQuota, setGlobalQuota] = useState<GlobalQuotaState | null>(null);
@@ -92,7 +95,7 @@ export default function VideoPage() {
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const firstFrameImage = useMemo(() => imageDataUrl || imageUrl.trim(), [imageDataUrl, imageUrl]);
-  const canSubmit = code.trim().length >= 8 && prompt.trim() && firstFrameImage && !loading;
+  const canSubmit = code.trim().length >= 8 && prompt.trim() && firstFrameImage && !loading && !submissionUncertain;
   const isDone = !!task?.download_url;
 
   // 从 localStorage 恢复上次输入的卡密
@@ -103,6 +106,53 @@ export default function VideoPage() {
     } catch {
       // ignore
     }
+  }, []);
+
+  // 从 sessionStorage 恢复 uncertain 操作状态(页面刷新后)
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('nc_video_op');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (!data.operationId || !data.timestamp || Date.now() - data.timestamp > 30 * 60 * 1000) {
+        sessionStorage.removeItem('nc_video_op');
+        return;
+      }
+      const storedCode: string = data.code || '';
+      setOperationId(data.operationId);
+      if (storedCode) setCode(storedCode);
+
+      fetch('/api/video/operation-status', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: storedCode, operation_id: data.operationId }),
+      }).then((res) => res.json()).then((body) => {
+        if (body?.data) {
+          if (body.data.status === 'uncertain') {
+            setSubmissionUncertain(true);
+            setError('提交结果正在确认，等待中...');
+          } else if (body.data.status === 'submitted' && body.data.task_id) {
+            setSubmissionUncertain(false);
+            setOperationId(null);
+            sessionStorage.removeItem('nc_video_op');
+            setTask({
+              task_id: body.data.task_id,
+              status: body.data.video_status || 'Submitted',
+              download_url: body.data.download_url || null,
+            });
+          } else if (body.data.status === 'failed') {
+            setSubmissionUncertain(false);
+            setOperationId(null);
+            sessionStorage.removeItem('nc_video_op');
+            setError(body.data.last_error || '任务创建失败');
+          } else {
+            setSubmissionUncertain(false);
+            setOperationId(null);
+            sessionStorage.removeItem('nc_video_op');
+          }
+        }
+      }).catch(() => {});
+    } catch {}
   }, []);
 
   // 页面加载时获取全局配额(无需卡密)
@@ -150,6 +200,60 @@ export default function VideoPage() {
       .finally(() => { if (alive) setQuotaLoading(false); });
     return () => { alive = false; };
   }, [code]);
+
+  // uncertain 操作轮询
+  useEffect(() => {
+    if (!submissionUncertain || !operationId) return;
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const poll = async () => {
+      setOperationPolling(true);
+      try {
+        const res = await fetch('/api/video/operation-status', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            code: code.trim().toUpperCase(),
+            operation_id: operationId,
+          }),
+        });
+        const body = await res.json();
+        if (!alive) return;
+        if (body?.data) {
+          if (body.data.status === 'submitted' && body.data.task_id) {
+            // 恢复: 进入正常任务轮询
+            setSubmissionUncertain(false);
+            setOperationId(null);
+            sessionStorage.removeItem('nc_video_op');
+            setTask({
+              task_id: body.data.task_id,
+              status: body.data.video_status || 'Submitted',
+              download_url: body.data.download_url || null,
+            });
+          } else if (body.data.status === 'failed') {
+            // 明确失败: 停止轮询,允许重新提交
+            setSubmissionUncertain(false);
+            setOperationId(null);
+            sessionStorage.removeItem('nc_video_op');
+            setError(body.data.last_error || '任务创建失败');
+          }
+          // pending / uncertain 继续轮询
+        }
+      } catch {
+        // 轮询网络错误,忽略
+      } finally {
+        if (alive) setOperationPolling(false);
+      }
+    };
+
+    poll();
+    timer = setInterval(poll, 7000);
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [submissionUncertain, operationId, code]);
 
   // 任务轮询
   useEffect(() => {
@@ -216,13 +320,19 @@ export default function VideoPage() {
     setError(null);
     setLoading(true);
     setTask(null);
+    setSubmissionUncertain(false);
     setCreatedAt(Date.now());
+
+    // 首次生成或之前失败后重新生成 → 创建新 operation_id
+    const opId = operationId || crypto.randomUUID();
+    setOperationId(opId);
+
     try {
       const res = await fetch('/api/video/create', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          operation_id: crypto.randomUUID(),
+          operation_id: opId,
           code: code.trim().toUpperCase(),
           prompt: prompt.trim(),
           first_frame_image: firstFrameImage,
@@ -233,10 +343,24 @@ export default function VideoPage() {
       });
       const body = await res.json();
       if (!body.success) {
+        if (body.code === 'SUBMISSION_UNCERTAIN') {
+          setSubmissionUncertain(true);
+          setError(body.message);
+          try {
+            sessionStorage.setItem('nc_video_op', JSON.stringify({
+              operationId: opId,
+              code: code.trim().toUpperCase(),
+              timestamp: Date.now(),
+            }));
+          } catch {}
+          return;
+        }
         setError(body.message || '创建任务失败');
+        setOperationId(null);
         return;
       }
       setTask(body.data);
+      setOperationId(null);
       // 更新配额
       if (body.data.base || body.data.invite_bonus) {
         setQuota({
@@ -522,8 +646,16 @@ export default function VideoPage() {
                 </div>
 
                 {error && (
-                  <div className="flex gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
-                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div className={`flex gap-2 rounded-lg border p-3 text-sm ${
+                    submissionUncertain
+                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                      : 'border-red-500/40 bg-red-500/10 text-red-200'
+                  }`}>
+                    {submissionUncertain ? (
+                      <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+                    ) : (
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    )}
                     <span>{error}</span>
                   </div>
                 )}
@@ -533,8 +665,8 @@ export default function VideoPage() {
                   disabled={!canSubmit}
                   className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-3 font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-700"
                 >
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                  创建视频任务
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : submissionUncertain ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                  {submissionUncertain ? '等待结果确认中...' : '创建视频任务'}
                 </button>
 
                 {/* 邀请入口 */}

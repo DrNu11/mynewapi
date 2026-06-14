@@ -23,15 +23,20 @@ export async function syncVideoTask(taskId: string): Promise<SyncResult> {
 
   const terminalStatuses = ['Success', 'Failed', 'Cancelled'];
   if (terminalStatuses.includes(task.status)) {
-    if (task.status === 'Success' && !task.download_url) {
-      // 补拉下载地址
-      return { task: await pullDownloadUrl(task), settled: false };
-    }
-    // 已成功: 尝试结算奖励(如果尚未结算)
+    // 先幂等结算奖励,不因 download_url 补拉卡住
     if (task.status === 'Success') {
-      try { settleInviteReward(task.id); } catch {}
+      try {
+        settleInviteReward(task.id);
+      } catch (e) {
+        console.error('[invite-reward] settlement failed', e);
+      }
     }
-    return { task, settled: false };
+    // 再按需补拉下载地址
+    let current = task;
+    if (task.status === 'Success' && !task.download_url) {
+      current = await pullDownloadUrl(task);
+    }
+    return { task: current, settled: task.status === 'Success' };
   }
 
   try {
@@ -64,7 +69,9 @@ export async function syncVideoTask(taskId: string): Promise<SyncResult> {
         try {
           const file = await retrieveHailuoFile(remote.fileId, task.account_index);
           downloadUrl = file.downloadUrl;
-        } catch {}
+        } catch (e) {
+          console.error('[video-sync] retrieve file failed', e);
+        }
       }
       updateVideoTask(taskId, {
         status: 'Success',
@@ -73,9 +80,14 @@ export async function syncVideoTask(taskId: string): Promise<SyncResult> {
         last_queried_at: Math.floor(Date.now() / 1000),
       });
       const updated = getVideoTaskByTaskId(taskId)!;
-      // 结算邀请奖励
-      try { settleInviteReward(updated.id); } catch {}
-      return { task: updated, settled: true };
+      // 结算邀请奖励 — 允许失败,记录日志供下一轮 reconcile 重试
+      try {
+        settleInviteReward(updated.id);
+        return { task: updated, settled: true };
+      } catch (e) {
+        console.error('[invite-reward] settlement failed', e);
+        return { task: updated, settled: false };
+      }
     }
 
     // 未知状态,仅更新 last_queried_at
@@ -102,6 +114,7 @@ async function pullDownloadUrl(task: VideoTask): Promise<VideoTask> {
     updateVideoTask(task.task_id, { download_url: file.downloadUrl });
     task.download_url = file.downloadUrl;
   } catch (e: any) {
+    console.error('[video-sync] pull download url failed', e);
     updateVideoTask(task.task_id, {
       last_query_error: `补拉下载地址失败: ${e?.message || e}`,
       last_queried_at: Math.floor(Date.now() / 1000),

@@ -98,34 +98,43 @@ function apiBase(): string {
 }
 
 async function minimaxFetch<T>(path: string, apiKey: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-  });
-  const text = await res.text();
-  let body: any = null;
+  const timeoutMs = Number(process.env.MINIMAX_HTTP_TIMEOUT_MS || 30000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    body = { raw: text };
+    const res = await fetch(`${apiBase()}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        ...(init?.headers || {}),
+      },
+    });
+    const text = await res.text();
+    let body: any = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = { raw: text };
+    }
+    if (!res.ok) {
+      const msg = body?.base_resp?.status_msg || body?.message || `海螺 HTTP ${res.status}`;
+      const err = new Error(msg) as any;
+      err.httpStatus = res.status;
+      throw err;
+    }
+    const statusCode = body?.base_resp?.status_code;
+    if (typeof statusCode === 'number' && statusCode !== 0) {
+      const err = new Error(body?.base_resp?.status_msg || `海螺 status_code ${statusCode}`) as any;
+      err.apiStatusCode = statusCode;
+      throw err;
+    }
+    return body as T;
+  } finally {
+    clearTimeout(timer);
   }
-  if (!res.ok) {
-    const msg = body?.base_resp?.status_msg || body?.message || `海螺 HTTP ${res.status}`;
-    const err = new Error(msg) as any;
-    err.httpStatus = res.status;
-    throw err;
-  }
-  const statusCode = body?.base_resp?.status_code;
-  if (typeof statusCode === 'number' && statusCode !== 0) {
-    const err = new Error(body?.base_resp?.status_msg || `海螺 status_code ${statusCode}`) as any;
-    err.apiStatusCode = statusCode;
-    throw err;
-  }
-  return body as T;
 }
 
 export function isHailuoModel(v: unknown): v is HailuoModel {
@@ -183,6 +192,8 @@ export async function createHailuoVideoTask(args: {
     } catch (e: any) {
       const msg: string = e?.message || String(e);
       errors.push(`账号${account.index + 1}: ${msg}`);
+      // 指定账号时直接抛原始错误,不内部循环
+      if (args.accountIndex !== undefined) throw e;
       // 限流/配额错误 → 尝试下一个账号
       if (
         e?.httpStatus === 429 ||
