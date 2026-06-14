@@ -15,6 +15,7 @@ import {
   Loader2,
   Play,
   RefreshCw,
+  ShoppingCart,
   Sparkles,
   WandSparkles,
   Ticket,
@@ -429,6 +430,9 @@ export default function VideoPage() {
 
   const ql = quotaLabel();
   const gql = globalQuotaLabel(globalQuota);
+  const buyCardUrl = process.env.NEXT_PUBLIC_BUY_CARD_URL || 'https://card.nassaapi.xyz';
+  const totalRemaining = quota ? (quota.base?.remaining ?? 0) + (quota.invite_bonus?.remaining ?? 0) : -1;
+  const isQuotaExhausted = quota !== null && totalRemaining <= 0;
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-100">
@@ -833,6 +837,35 @@ export default function VideoPage() {
                       </p>
                     </div>
                   )}
+                </div>
+              </div>
+
+              {/* 购买日卡 CTA */}
+              <div className="mt-6 rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/10 via-slate-900/80 to-purple-500/5 p-5">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-500/20">
+                    <ShoppingCart className="h-5 w-5 text-purple-300" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-base font-semibold text-slate-100">
+                      {isQuotaExhausted ? '视频次数已用完' : '还没有卡密？'}
+                    </h3>
+                    <p className="mt-1.5 text-sm leading-relaxed text-slate-400">
+                      {isQuotaExhausted
+                        ? '你可以购买日卡继续使用，或邀请好友获得奖励次数。'
+                        : '购买日卡后，回到本页输入卡密即可使用 API 与视频生成能力。'}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-500">自动发卡 · 激活即用 · 支持 DeepSeek / GPT / Claude</p>
+                    <a
+                      href={buyCardUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-4 inline-flex items-center gap-2 rounded-lg bg-purple-500/90 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-purple-500"
+                    >
+                      <ShoppingCart className="h-4 w-4" />
+                      {isQuotaExhausted ? '购买日卡' : '立即购买日卡'}
+                    </a>
+                  </div>
                 </div>
               </div>
             </section>
