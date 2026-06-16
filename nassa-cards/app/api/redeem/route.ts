@@ -154,7 +154,7 @@ export async function POST(req: NextRequest) {
   const planMeta = isPlanId(card.plan) ? PLAN_BY_ID[card.plan] : undefined;
   const planQuotaUSD = quotaForCard(cat, card.plan, planMeta);
   const planNoExpire = planMeta?.noExpire ?? false;
-  const planGroup = planMeta?.newapiGroup; // e.g. '30d-unlimited' → 'pro'
+  const planGroup = planMeta?.newapiGroup; // e.g. '30d-unlimited' → undefined → 'default'
   let tokenInfo;
   try {
     tokenInfo = await createTokenAndGetKey(
