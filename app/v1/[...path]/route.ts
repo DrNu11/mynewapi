@@ -43,14 +43,8 @@ const NEWAPI_UPSTREAM = (
 
 const DAY_CARD_DAILY_CAP_USD = 250;
 const DAY_CARD_DAILY_CAP_QUOTA = DAY_CARD_DAILY_CAP_USD * NEWAPI_QUOTA_PER_USD;
-
-function shanghaiDayStartSec(nowSec = Math.floor(Date.now() / 1000)): number {
-  return Math.floor((nowSec + 8 * 3600) / 86400) * 86400 - 8 * 3600;
-}
-
-function nextShanghaiDayStartSec(nowSec = Math.floor(Date.now() / 1000)): number {
-  return shanghaiDayStartSec(nowSec) + 86400;
-}
+const CLAUDE_DAY_CARD_DAILY_CAP_USD = 350;
+const CLAUDE_DAY_CARD_DAILY_CAP_QUOTA = CLAUDE_DAY_CARD_DAILY_CAP_USD * NEWAPI_QUOTA_PER_USD;
 
 function formatUsdFromQuota(quota: number): string {
   return (quota / NEWAPI_QUOTA_PER_USD).toFixed(2);
@@ -511,32 +505,32 @@ async function handle(req: NextRequest, pathParts: string[]) {
     }
   }
 
-  // 4.2 日卡每日成本保护 — 防止 1d 无限额 token 被并发爆刷。
-  // 口径:NewAPI logs 里该 token 从北京时间当天 00:00 起的真实消耗 quota。
+  // 4.2 日卡总额度保护 — 从激活起累计,不过期不重置。
+  // Claude: $350 | GPT/DeepSeek: $250
   if (card.plan === '1d' && card.newapi_token_id) {
-    let usedQuotaToday = 0;
+    const capUsd = card.category === 'claude' ? CLAUDE_DAY_CARD_DAILY_CAP_USD : DAY_CARD_DAILY_CAP_USD;
+    const capQuota = card.category === 'claude' ? CLAUDE_DAY_CARD_DAILY_CAP_QUOTA : DAY_CARD_DAILY_CAP_QUOTA;
+    let usedQuotaTotal = 0;
     try {
-      usedQuotaToday = await getTokenUsageQuotaSince(
+      usedQuotaTotal = await getTokenUsageQuotaSince(
         card.newapi_token_id,
-        shanghaiDayStartSec(now),
+        card.activated_at!,
       );
     } catch (e) {
-      console.error('[v1-proxy] daily cap check failed:', e);
+      console.error('[v1-proxy] total cap check failed:', e);
       return jsonError(
         503,
-        '日卡额度保护校验失败,为防止异常扣费已暂停本次请求,请稍后重试',
+        '额度保护校验失败,为防止异常扣费已暂停本次请求,请稍后重试',
         'service_unavailable',
       );
     }
 
-    if (usedQuotaToday >= DAY_CARD_DAILY_CAP_QUOTA) {
-      const retryAfter = Math.max(1, nextShanghaiDayStartSec(now) - now);
+    if (usedQuotaTotal >= capQuota) {
       const resp = jsonError(
         429,
-        `日卡今日使用额度已达 $${DAY_CARD_DAILY_CAP_USD} 上限,为防止异常并发爆刷已暂停请求,明天 00:00 后自动恢复。当前统计: $${formatUsdFromQuota(usedQuotaToday)}`,
+        `日卡累计额度已达 $${capUsd} 上限,无法继续请求。当前统计: $${formatUsdFromQuota(usedQuotaTotal)}`,
         'rate_limit_exceeded',
       );
-      resp.headers.set('retry-after', String(retryAfter));
       return resp;
     }
   }

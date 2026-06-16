@@ -30,7 +30,6 @@ export const PLANS: Plan[] = [
     rphOverride: 0,
     quotaUSD: 2000,
     noExpire: true,
-    newapiGroup: 'pro',
     internal: true,
   },
 ];
