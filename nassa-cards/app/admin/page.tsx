@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PLANS, formatDaysCN } from '@/lib/plans';
-import { CATEGORIES, CATEGORY_LIST, type Category } from '@/lib/categories';
+import { CATEGORIES, CATEGORY_LIST, modelsForCategory, type Category } from '@/lib/categories';
 import {
   Plus,
   RefreshCcw,
@@ -77,6 +77,7 @@ export default function AdminDashboard() {
   const [generating, setGenerating] = useState(false);
   const [newCodes, setNewCodes] = useState<string[]>([]);
   const [copiedAll, setCopiedAll] = useState(false);
+  const [copiedDelivery, setCopiedDelivery] = useState(false);
   const [copiedRow, setCopiedRow] = useState<number | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [tab, setTab] = useState<'cards' | 'invites'>('cards');
@@ -194,6 +195,25 @@ export default function AdminDashboard() {
     navigator.clipboard.writeText(text);
     setCopiedRow(id);
     setTimeout(() => setCopiedRow(null), 1500);
+  }
+
+  function buildDeliveryText(codes: string[], category: Category): string {
+    const meta = CATEGORIES[category];
+    const baseUrl = `https://card.nassaapi.xyz${meta.baseUrlSuffix}`;
+    const models = modelsForCategory(category).join(', ');
+    const claudeNote = category === 'claude'
+      ? '\n注意：Claude Code CLI 的 Base URL 不需要 /v1 后缀，直接填 https://card.nassaapi.xyz 即可。'
+      : '';
+
+    return codes.map((code) => {
+      return `卡密：${code}\n激活地址：https://card.nassaapi.xyz\n激活后会自动生成 sk- 开头的 API Key。\nAPI 请求地址 / Base URL：${baseUrl}${claudeNote}\n支持模型：${models}\n说明：每小时 ${meta.defaultRPH} 次请求。\n请先进入激活地址输入卡密，激活成功后复制生成的 API Key 使用即可。`;
+    }).join('\n\n---\n\n');
+  }
+
+  function copyDelivery() {
+    navigator.clipboard.writeText(buildDeliveryText(newCodes, genCategory));
+    setCopiedDelivery(true);
+    setTimeout(() => setCopiedDelivery(false), 1500);
   }
 
   const fmtTime = (t: number | null) => (t ? new Date(t * 1000).toLocaleString('zh-CN', { hour12: false }) : '-');
@@ -582,13 +602,22 @@ export default function AdminDashboard() {
                 <div className="text-sm font-medium text-emerald-300">
                   ✓ 已生成 {newCodes.length} 个新卡密
                 </div>
-                <button
-                  onClick={copyAll}
-                  className="flex items-center gap-1.5 rounded bg-emerald-500/20 px-3 py-1 text-xs text-emerald-300 hover:bg-emerald-500/30"
-                >
-                  {copiedAll ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                  {copiedAll ? '已复制' : '一键全选复制'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={copyAll}
+                    className="flex items-center gap-1.5 rounded bg-emerald-500/20 px-3 py-1 text-xs text-emerald-300 hover:bg-emerald-500/30"
+                  >
+                    {copiedAll ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                    {copiedAll ? '已复制' : '一键全选复制'}
+                  </button>
+                  <button
+                    onClick={copyDelivery}
+                    className="flex items-center gap-1.5 rounded bg-emerald-500/20 px-3 py-1 text-xs text-emerald-300 hover:bg-emerald-500/30"
+                  >
+                    {copiedDelivery ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                    {copiedDelivery ? '已复制发货文案' : '一键复制发货文案'}
+                  </button>
+                </div>
               </div>
               <pre className="mt-3 max-h-48 overflow-auto rounded bg-slate-950 p-3 font-mono text-xs text-slate-300">
                 {newCodes.join('\n')}
