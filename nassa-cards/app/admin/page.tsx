@@ -197,7 +197,7 @@ export default function AdminDashboard() {
     setTimeout(() => setCopiedRow(null), 1500);
   }
 
-  function buildDeliveryText(codes: string[], category: Category): string {
+  function buildDeliveryText(codes: string[], category: Category, plan: string): string {
     const meta = CATEGORIES[category];
     const baseUrl = `https://card.nassaapi.xyz${meta.baseUrlSuffix}`;
     const models = modelsForCategory(category).join(', ');
@@ -205,13 +205,18 @@ export default function AdminDashboard() {
       ? '\n注意：Claude Code CLI 的 Base URL 不需要 /v1 后缀，直接填 https://card.nassaapi.xyz 即可。'
       : '';
 
+    const isLight = plan === '30d_light';
+    const desc = isLight
+      ? '套餐说明：DeepSeek 轻度月卡，30 天有效。\n每小时最多 500 次请求。\n近 24 小时最多 2000 次请求。\n近 7 天最多 10000 次请求。\n整张卡总共最多 40000 次请求。'
+      : `说明：每小时 ${meta.defaultRPH} 次请求。`;
+
     return codes.map((code) => {
-      return `卡密：${code}\n激活地址：https://card.nassaapi.xyz\n激活后会自动生成 sk- 开头的 API Key。\nAPI 请求地址 / Base URL：${baseUrl}${claudeNote}\n支持模型：${models}\n说明：每小时 ${meta.defaultRPH} 次请求。\n请先进入激活地址输入卡密，激活成功后复制生成的 API Key 使用即可。`;
+      return `卡密：${code}\n激活地址：https://card.nassaapi.xyz\n激活后会自动生成 sk- 开头的 API Key。\nAPI 请求地址 / Base URL：${baseUrl}${claudeNote}\n支持模型：${models}\n${desc}\n请先进入激活地址输入卡密，激活成功后复制生成的 API Key 使用即可。`;
     }).join('\n\n---\n\n');
   }
 
   function copyDelivery() {
-    navigator.clipboard.writeText(buildDeliveryText(newCodes, genCategory));
+    navigator.clipboard.writeText(buildDeliveryText(newCodes, genCategory, genPlan));
     setCopiedDelivery(true);
     setTimeout(() => setCopiedDelivery(false), 1500);
   }

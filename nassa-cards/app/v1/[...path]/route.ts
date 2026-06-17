@@ -14,6 +14,7 @@ import {
   getCardByTokenKey,
   reserveCurrentHourRequest,
   updateRequestLogStatus,
+  countCardRequestsSince,
 } from '@/lib/db';
 import { isCategory, legacyModels, modelsForCategory } from '@/lib/categories';
 import {
@@ -43,8 +44,18 @@ const NEWAPI_UPSTREAM = (
 
 const DAY_CARD_DAILY_CAP_USD = 250;
 const DAY_CARD_DAILY_CAP_QUOTA = DAY_CARD_DAILY_CAP_USD * NEWAPI_QUOTA_PER_USD;
-const CLAUDE_DAY_CARD_DAILY_CAP_USD = 350;
-const CLAUDE_DAY_CARD_DAILY_CAP_QUOTA = CLAUDE_DAY_CARD_DAILY_CAP_USD * NEWAPI_QUOTA_PER_USD;
+const CLAUDE_TOTAL_CAP_USD = 350;
+const CLAUDE_TOTAL_CAP_QUOTA = CLAUDE_TOTAL_CAP_USD * NEWAPI_QUOTA_PER_USD;
+const DEEPSEEK_DAILY_CAP_USD = 500;
+const DEEPSEEK_DAILY_CAP_QUOTA = DEEPSEEK_DAILY_CAP_USD * NEWAPI_QUOTA_PER_USD;
+
+function shanghaiDayStartSec(nowSec = Math.floor(Date.now() / 1000)): number {
+  return Math.floor((nowSec + 8 * 3600) / 86400) * 86400 - 8 * 3600;
+}
+
+function nextShanghaiDayStartSec(nowSec = Math.floor(Date.now() / 1000)): number {
+  return shanghaiDayStartSec(nowSec) + 86400;
+}
 
 function formatUsdFromQuota(quota: number): string {
   return (quota / NEWAPI_QUOTA_PER_USD).toFixed(2);
@@ -505,19 +516,31 @@ async function handle(req: NextRequest, pathParts: string[]) {
     }
   }
 
-  // 4.2 日卡总额度保护 — 从激活起累计,不过期不重置。
-  // Claude: $350 | GPT/DeepSeek: $250
+  // 4.2 日卡额度保护。
+  // DeepSeek:每日 $500,北京时间 00:00 重置。
+  // Claude:总额度 $350,从激活起累计。
+  // GPT:总额度 $250,从激活起累计。
   if (card.plan === '1d' && card.newapi_token_id) {
-    const capUsd = card.category === 'claude' ? CLAUDE_DAY_CARD_DAILY_CAP_USD : DAY_CARD_DAILY_CAP_USD;
-    const capQuota = card.category === 'claude' ? CLAUDE_DAY_CARD_DAILY_CAP_QUOTA : DAY_CARD_DAILY_CAP_QUOTA;
-    let usedQuotaTotal = 0;
+    const isDaily = card.category === 'deepseek';
+    const capUsd = card.category === 'deepseek'
+      ? DEEPSEEK_DAILY_CAP_USD
+      : card.category === 'claude'
+        ? CLAUDE_TOTAL_CAP_USD
+        : DAY_CARD_DAILY_CAP_USD;
+    const capQuota = card.category === 'deepseek'
+      ? DEEPSEEK_DAILY_CAP_QUOTA
+      : card.category === 'claude'
+        ? CLAUDE_TOTAL_CAP_QUOTA
+        : DAY_CARD_DAILY_CAP_QUOTA;
+
+    let usedQuota = 0;
     try {
-      usedQuotaTotal = await getTokenUsageQuotaSince(
+      usedQuota = await getTokenUsageQuotaSince(
         card.newapi_token_id,
-        card.activated_at!,
+        isDaily ? shanghaiDayStartSec(now) : card.activated_at!,
       );
     } catch (e) {
-      console.error('[v1-proxy] total cap check failed:', e);
+      console.error('[v1-proxy] cap check failed:', e);
       return jsonError(
         503,
         '额度保护校验失败,为防止异常扣费已暂停本次请求,请稍后重试',
@@ -525,13 +548,52 @@ async function handle(req: NextRequest, pathParts: string[]) {
       );
     }
 
-    if (usedQuotaTotal >= capQuota) {
-      const resp = jsonError(
-        429,
-        `日卡累计额度已达 $${capUsd} 上限,无法继续请求。当前统计: $${formatUsdFromQuota(usedQuotaTotal)}`,
-        'rate_limit_exceeded',
-      );
+    if (usedQuota >= capQuota) {
+      const retryAfter = isDaily ? Math.max(1, nextShanghaiDayStartSec(now) - now) : undefined;
+      const msg = isDaily
+        ? `日卡今日使用额度已达 $${capUsd} 上限,明天 00:00 后自动恢复。当前统计: $${formatUsdFromQuota(usedQuota)}`
+        : `日卡累计额度已达 $${capUsd} 上限,无法继续请求。当前统计: $${formatUsdFromQuota(usedQuota)}`;
+      const resp = jsonError(429, msg, 'rate_limit_exceeded');
+      if (retryAfter) resp.headers.set('retry-after', String(retryAfter));
       return resp;
+    }
+  }
+
+  // 4.3 轻度月卡请求次数限额(仅 plan === '30d_light')
+  // 滚动窗口: 24h 2000次, 7d 10000次, lifetime 40000次
+  if (card.plan === '30d_light' && card.activated_at) {
+    const LIGHT_24H_LIMIT = 2000;
+    const LIGHT_7D_LIMIT = 10000;
+    const LIGHT_LIFETIME_LIMIT = 40000;
+
+    const since24h = now - 24 * 3600;
+    const since7d = now - 7 * 24 * 3600;
+
+    const used24h = countCardRequestsSince(card.id, since24h);
+    if (used24h >= LIGHT_24H_LIMIT) {
+      return jsonError(
+        429,
+        `该 DeepSeek 轻度月卡近 24 小时请求次数已用完（${used24h}/${LIGHT_24H_LIMIT}），请稍后再试。`,
+        'deepseek_light_month_24h_limit_exceeded'
+      );
+    }
+
+    const used7d = countCardRequestsSince(card.id, since7d);
+    if (used7d >= LIGHT_7D_LIMIT) {
+      return jsonError(
+        429,
+        `该 DeepSeek 轻度月卡近 7 天请求次数已用完（${used7d}/${LIGHT_7D_LIMIT}），请稍后再试。`,
+        'deepseek_light_month_7d_limit_exceeded'
+      );
+    }
+
+    const usedTotal = countCardRequestsSince(card.id, card.activated_at);
+    if (usedTotal >= LIGHT_LIFETIME_LIMIT) {
+      return jsonError(
+        429,
+        `该 DeepSeek 轻度月卡总请求次数已用完（${usedTotal}/${LIGHT_LIFETIME_LIMIT}），无法继续请求。`,
+        'deepseek_light_month_total_limit_exceeded'
+      );
     }
   }
 
