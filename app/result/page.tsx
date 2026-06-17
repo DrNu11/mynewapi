@@ -140,6 +140,7 @@ interface DailyByModel {
 interface UsageState {
   used: number;
   rph: number;
+  rph_bonus: number;
   remaining: number;
   loading: boolean;
   fetchedAt: number; // unix sec
@@ -233,6 +234,7 @@ export default function ResultPage() {
         setUsage({
           used: j.data.used,
           rph: j.data.rph,
+          rph_bonus: j.data.rph_bonus || 0,
           remaining: j.data.remaining,
           nextResetAt: j.data.next_reset_at,
           modelsUsed: j.data.models_used || [],
@@ -272,6 +274,7 @@ export default function ResultPage() {
         setUsage({
           used: j.data.used,
           rph: j.data.rph,
+          rph_bonus: j.data.rph_bonus || 0,
           remaining: j.data.remaining,
           nextResetAt: j.data.next_reset_at,
           modelsUsed: j.data.models_used || [],
@@ -630,6 +633,12 @@ export default function ResultPage() {
                     style={{ width: `${Math.min(100, (usage.used / usage.rph) * 100)}%` }}
                   />
                 </div>
+
+                {usage.rph_bonus > 0 && (
+                  <div className="mt-2 text-xs text-amber-300">
+                    已含好评奖励 +{usage.rph_bonus} 次/小时
+                  </div>
+                )}
 
                 {/* 本小时调用模型分布 */}
                 {usage.modelsUsed && usage.modelsUsed.length > 0 && (

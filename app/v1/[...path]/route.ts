@@ -15,6 +15,7 @@ import {
   reserveCurrentHourRequest,
   updateRequestLogStatus,
   countCardWeightedPoints,
+  getEffectiveRph,
 } from '@/lib/db';
 import { isCategory, legacyModels, modelsForCategory } from '@/lib/categories';
 import {
@@ -600,13 +601,14 @@ async function handle(req: NextRequest, pathParts: string[]) {
   // 5. RPH 限速 — 整点固定窗口(每小时 hh:00 重置)。
   // 用事务先占一个 request_logs 槽位,把 in-flight 请求也算进去,防止并发同时通过检查后超发。
   let requestLogId: number | null = null;
-  if (card.rph > 0) {
-    const reservation = reserveCurrentHourRequest(sk, card.id, card.rph, requestedModel);
+  const effectiveRph = getEffectiveRph(card);
+  if (effectiveRph > 0) {
+    const reservation = reserveCurrentHourRequest(sk, card.id, effectiveRph, requestedModel);
     if (!reservation.allowed) {
       const retryAfter = Math.max(1, reservation.nextResetAt - Math.floor(Date.now() / 1000));
       const resp = jsonError(
         429,
-        `每小时请求数已达上限 ${card.rph} 次,${retryAfter} 秒后(整点)重置`,
+        `每小时请求数已达上限 ${effectiveRph} 次,${retryAfter} 秒后(整点)重置`,
         'rate_limit_exceeded'
       );
       resp.headers.set('retry-after', String(retryAfter));

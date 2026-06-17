@@ -19,6 +19,8 @@ import {
   Power,
   FolderTree,
   UserRound,
+  ThumbsUp,
+  RotateCcw,
 } from 'lucide-react';
 
 interface CardRow {
@@ -28,6 +30,9 @@ interface CardRow {
   plan_days: number;
   category: string | null;
   rph: number;
+  rph_bonus: number;
+  rph_bonus_reason: string | null;
+  rph_bonus_at: number | null;
   used_1h: number;
   status: 'unused' | 'activated' | 'expired' | 'disabled';
   created_at: number;
@@ -80,6 +85,7 @@ export default function AdminDashboard() {
   const [copiedDelivery, setCopiedDelivery] = useState(false);
   const [copiedRow, setCopiedRow] = useState<number | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [bonusId, setBonusId] = useState<number | null>(null);
   const [tab, setTab] = useState<'cards' | 'invites'>('cards');
 
   // invite review state
@@ -207,7 +213,7 @@ export default function AdminDashboard() {
 
     const isLight = plan === '30d_light';
     const desc = isLight
-      ? '套餐说明：DeepSeek 轻度月卡，30 天有效。\n每小时最多 500 次请求。\n近 24 小时最多 2000 次请求。\n近 7 天最多 10000 次请求。\n整张卡总共最多 40000 次请求。'
+      ? '套餐说明：DeepSeek 轻度月卡，30 天有效。\n近 24 小时最多 2000 点调用额度。\n近 7 天最多 10000 点调用额度。\n整张卡总共最多 40000 点调用额度。\n\n模型消耗：\ndeepseek-v4-flash 每次消耗 1 点。\ndeepseek-v4-pro 每次消耗 3 点。'
       : `说明：每小时 ${meta.defaultRPH} 次请求。`;
 
     return codes.map((code) => {
@@ -366,6 +372,30 @@ export default function AdminDashboard() {
       alert(`${verb}失败: ${e?.message || e}`);
     } finally {
       setTogglingId(null);
+    }
+  }
+
+  async function rphBonusAction(card: CardRow, action: 'apply_rph_bonus' | 'clear_rph_bonus') {
+    const label = action === 'apply_rph_bonus' ? '好评 +55' : '撤销加成';
+    if (action === 'apply_rph_bonus' && !confirm(`确定为 ${card.code} 应用好评奖励 +55 RPH?`)) return;
+    if (action === 'clear_rph_bonus' && !confirm(`确定撤销 ${card.code} 的 RPH 加成?`)) return;
+    setBonusId(card.id);
+    try {
+      const res = await fetch(`/api/admin/cards/${encodeURIComponent(card.code)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const body = await res.json();
+      if (!body.success) {
+        alert(`${label}失败: ${body.message}`);
+      } else {
+        await load();
+      }
+    } catch (e: any) {
+      alert(`${label}失败: ${e?.message || e}`);
+    } finally {
+      setBonusId(null);
     }
   }
 
@@ -760,15 +790,18 @@ export default function AdminDashboard() {
                         <span className="text-slate-500">不限</span>
                       ) : (
                         <span
-                          className={`font-mono ${c.used_1h >= c.rph
+                          className={`font-mono ${c.used_1h >= (c.rph + (c.rph_bonus || 0))
                             ? 'text-red-300'
-                            : c.used_1h >= c.rph * 0.8
+                            : c.used_1h >= (c.rph + (c.rph_bonus || 0)) * 0.8
                               ? 'text-amber-300'
                               : 'text-slate-300'
                             }`}
                         >
-                          {c.used_1h}/{c.rph}
+                          {c.used_1h}/{c.rph + (c.rph_bonus || 0)}
                         </span>
+                      )}
+                      {c.rph_bonus > 0 && (
+                        <span className="ml-1 text-[10px] text-amber-400">+{c.rph_bonus}</span>
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-xs text-slate-500">{c.notes || '-'}</td>
@@ -819,6 +852,45 @@ export default function AdminDashboard() {
                             <KeyRound className="h-3 w-3" />
                             Key
                           </button>
+                        )}
+                        {/* RPH 加成按钮: 当前仅 deepseek 1d/7d/30d */}
+                        {c.category === 'deepseek' && ['1d', '7d', '30d'].includes(c.plan) && c.status !== 'expired' && c.status !== 'disabled' && (
+                          c.rph_bonus > 0 ? (
+                            <>
+                              <button
+                                disabled
+                                className="flex items-center gap-1 rounded border border-amber-500/40 px-2 py-1 text-xs text-amber-300"
+                              >
+                                <ThumbsUp className="h-3 w-3" />
+                                已加成 +55
+                              </button>
+                              <button
+                                onClick={() => rphBonusAction(c, 'clear_rph_bonus')}
+                                disabled={bonusId === c.id}
+                                className="flex items-center gap-1 rounded border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+                              >
+                                {bonusId === c.id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="h-3 w-3" />
+                                )}
+                                撤销加成
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => rphBonusAction(c, 'apply_rph_bonus')}
+                              disabled={bonusId === c.id}
+                              className="flex items-center gap-1 rounded border border-amber-500/40 px-2 py-1 text-xs text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
+                            >
+                              {bonusId === c.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <ThumbsUp className="h-3 w-3" />
+                              )}
+                              好评 +55
+                            </button>
+                          )
                         )}
                         {(c.status === 'activated' || c.status === 'unused') && (
                           <button

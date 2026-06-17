@@ -17,6 +17,7 @@ import {
   getDailyCountsLastNDays,
   getDailyCountsByModelLastNDays,
   getTopModelsLastNDays,
+  getEffectiveRph,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -61,8 +62,8 @@ export async function POST(req: NextRequest) {
   }
 
   const { used, hourStart, nextResetAt } = countCurrentHourRequests(sk);
-  const rph = card.rph || 0;
-  const remaining = rph > 0 ? Math.max(0, rph - used) : -1; // -1 = 不限
+  const effectiveRph = getEffectiveRph(card);
+  const remaining = effectiveRph > 0 ? Math.max(0, effectiveRph - used) : -1; // -1 = 不限
   const modelsUsed = getModelsUsedCurrentHour(sk);
 
   // 扩展看板统计:总览、近 7 天趋势、7 天模型 top
@@ -79,7 +80,9 @@ export async function POST(req: NextRequest) {
     success: true,
     data: {
       used,
-      rph,
+      rph: effectiveRph,
+      rph_base: card.rph || 0,
+      rph_bonus: card.rph_bonus || 0,
       remaining,
       window_sec: 3600,
       hour_start: hourStart, // 当前整点窗口起始 unix 秒
