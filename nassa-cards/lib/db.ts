@@ -993,6 +993,29 @@ export function countCardRequestsSince(cardId: number, sinceSec: number): number
   return row.c;
 }
 
+/** DeepSeek 轻度月卡模型消耗权重：flash=1点, pro=3点 */
+export function getDeepSeekLightRequestWeight(model: string | null): number {
+  if (model === 'deepseek-v4-pro') return 3;
+  if (model === 'deepseek-v4-flash') return 1;
+  return 1; // 未知/其他 deepseek 模型默认 1
+}
+
+/** 统计某张卡从 sinceSec 到现在的加权调用点数(仅轻度月卡使用) */
+export function countCardWeightedPoints(cardId: number, sinceSec: number): number {
+  const row = db()
+    .prepare(
+      `SELECT SUM(
+        CASE
+          WHEN model = 'deepseek-v4-pro' THEN 3
+          WHEN model = 'deepseek-v4-flash' THEN 1
+          ELSE 1
+        END
+      ) as total FROM request_logs WHERE card_id = ? AND ts >= ?`
+    )
+    .get(cardId, sinceSec) as { total: number | null };
+  return row.total ?? 0;
+}
+
 /** 当前自然小时内 sk-key 调用过的模型分布(按次数倒序) */
 export function getModelsUsedCurrentHour(skKey: string): Array<{ model: string; count: number }> {
   const now = Math.floor(Date.now() / 1000);
