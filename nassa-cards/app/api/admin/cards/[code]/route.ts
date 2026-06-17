@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/auth';
-import { getCardByCode, setCardStatus, setCardPool, setCardNewApiUserId } from '@/lib/db';
+import { getCardByCode, setCardStatus, setCardPool, setCardNewApiUserId, applyRphBonus, clearRphBonus, isRphBonusEligible } from '@/lib/db';
 import { updateTokenStatus } from '@/lib/newapi';
 import { normalizeCode } from '@/lib/codes';
 
@@ -44,9 +44,9 @@ export async function PATCH(
   }
 
   const action = body.action;
-  if (action !== 'disable' && action !== 'enable' && action !== 'set_pool' && action !== 'set_newapi_user_id') {
+  if (action !== 'disable' && action !== 'enable' && action !== 'set_pool' && action !== 'set_newapi_user_id' && action !== 'apply_rph_bonus' && action !== 'clear_rph_bonus') {
     return NextResponse.json(
-      { success: false, message: 'action 必须是 disable / enable / set_pool / set_newapi_user_id' },
+      { success: false, message: 'action 必须是 disable / enable / set_pool / set_newapi_user_id / apply_rph_bonus / clear_rph_bonus' },
       { status: 400 }
     );
   }
@@ -59,6 +59,24 @@ export async function PATCH(
   // 只改运营池标签 — 不联动 NewAPI,快路返回
   if (action === 'set_pool') {
     const updated = setCardPool(code, body.pool ?? null);
+    return NextResponse.json({ success: true, data: { card: updated } });
+  }
+
+  // RPH 加成 (当前仅 deepseek 1d/7d/30d, 好评 +55)
+  if (action === 'apply_rph_bonus') {
+    if (!isRphBonusEligible(card)) {
+      return NextResponse.json(
+        { success: false, message: '该卡不支持 RPH 加成。', error: { message: '该卡不支持 RPH 加成。', type: 'invalid_request_error', code: 'rph_bonus_not_allowed' } },
+        { status: 400 }
+      );
+    }
+    const updated = applyRphBonus(code);
+    return NextResponse.json({ success: true, data: { card: updated } });
+  }
+
+  // 撤销 RPH 加成
+  if (action === 'clear_rph_bonus') {
+    const updated = clearRphBonus(code);
     return NextResponse.json({ success: true, data: { card: updated } });
   }
 

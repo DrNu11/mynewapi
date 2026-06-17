@@ -119,6 +119,15 @@ function init(inst: Database.Database) {
   if (!cols.some((c) => c.name === 'rph')) {
     inst.exec('ALTER TABLE cards ADD COLUMN rph INTEGER NOT NULL DEFAULT 0');
   }
+  if (!cols.some((c) => c.name === 'rph_bonus')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN rph_bonus INTEGER DEFAULT 0');
+  }
+  if (!cols.some((c) => c.name === 'rph_bonus_reason')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN rph_bonus_reason TEXT');
+  }
+  if (!cols.some((c) => c.name === 'rph_bonus_at')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN rph_bonus_at INTEGER');
+  }
   if (!cols.some((c) => c.name === 'pool')) {
     inst.exec('ALTER TABLE cards ADD COLUMN pool TEXT');
   }
@@ -319,6 +328,10 @@ export interface Card {
   category: string | null;
   /** 每小时请求数上限(0 = 不限) */
   rph: number;
+  /** 通用 RPH 加成(好评奖励/售后补偿/活动加成等) */
+  rph_bonus: number;
+  rph_bonus_reason: string | null;
+  rph_bonus_at: number | null;
   /** 视频生成基础体验次数(默认 1, 0 = 不限) */
   video_quota: number;
   /** 邀请奖励获得的额外视频次数 */
@@ -1014,6 +1027,49 @@ export function countCardWeightedPoints(cardId: number, sinceSec: number): numbe
     )
     .get(cardId, sinceSec) as { total: number | null };
   return row.total ?? 0;
+}
+
+/** RPH 加成适用判断(仅用于 RPH 计算)：策略函数，当前仅 deepseek 1d/7d/30d 允许 */
+export function canUseRphBonus(card: { category: string | null; plan: string }): boolean {
+  return card.category === 'deepseek'
+    && ['1d', '7d', '30d'].includes(card.plan);
+}
+
+/** RPH 加成资格判断(后台按钮显示用)：额外排除 expired/disabled */
+export function isRphBonusEligible(card: { category: string | null; plan: string; status: string }): boolean {
+  return card.category === 'deepseek'
+    && ['1d', '7d', '30d'].includes(card.plan)
+    && card.status !== 'expired'
+    && card.status !== 'disabled';
+}
+
+/** 实际 RPH = 基础 rph + rph_bonus(仅适用范围内的卡才叠加) */
+export function getEffectiveRph(card: { category: string | null; plan: string; rph: number; rph_bonus: number }): number {
+  const base = Number(card.rph || 0);
+  if (!canUseRphBonus(card)) return base;
+  return base + Number(card.rph_bonus || 0);
+}
+
+/** 应用 RPH 加成(amount 目前固定 55,reason 目前固定 good_review) */
+export function applyRphBonus(code: string): Card | null {
+  const now = Math.floor(Date.now() / 1000);
+  const card = getCardByCode(code);
+  if (!card) return null;
+  if (!isRphBonusEligible(card)) return null;
+  db().prepare(
+    'UPDATE cards SET rph_bonus = 55, rph_bonus_reason = ?, rph_bonus_at = ? WHERE code = ?'
+  ).run('good_review', now, code);
+  return getCardByCode(code);
+}
+
+/** 撤销 RPH 加成 */
+export function clearRphBonus(code: string): Card | null {
+  const card = getCardByCode(code);
+  if (!card) return null;
+  db().prepare(
+    'UPDATE cards SET rph_bonus = 0, rph_bonus_reason = NULL, rph_bonus_at = NULL WHERE code = ?'
+  ).run(code);
+  return getCardByCode(code);
 }
 
 /** 当前自然小时内 sk-key 调用过的模型分布(按次数倒序) */
