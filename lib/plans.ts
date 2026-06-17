@@ -1,4 +1,4 @@
-export type PlanId = '0.5d' | '1d' | '7d' | '30d' | '30d-unlimited';
+export type PlanId = '0.5d' | '1d' | '7d' | '30d' | '30d_light' | '30d-unlimited';
 
 export interface Plan {
   id: PlanId;
@@ -15,6 +15,12 @@ export interface Plan {
   noExpire?: boolean;
   /** NewAPI 渠道分组覆盖;不设则 token group='default'。例如 'pro' 让 token 只走 pro 组里的高优先渠道 */
   newapiGroup?: string;
+  /** 滚动窗口请求次数限制(仅轻度月卡等套餐使用) */
+  requestLimits?: {
+    rolling24h: number;
+    rolling7d: number;
+    lifetime: number;
+  };
 }
 
 export const PLANS: Plan[] = [
@@ -22,6 +28,13 @@ export const PLANS: Plan[] = [
   { id: '1d', days: 1, label: '1 天畅用', description: '适合体验,激活后 24 小时内不限量' },
   { id: '7d', days: 7, label: '7 天高速', description: '一周高强度使用,性价比首选' },
   { id: '30d', days: 30, label: '30 天高速', description: '整月不限量,长期工作流首选' },
+  {
+    id: '30d_light',
+    days: 30,
+    label: '轻度月卡',
+    description: 'DeepSeek 轻度月卡,30 天有效,每小时 500 / 24h 2000 / 7d 10000 / 总量 40000 次请求',
+    requestLimits: { rolling24h: 2000, rolling7d: 10000, lifetime: 40000 },
+  },
   {
     id: '30d-unlimited',
     days: 30,
@@ -39,7 +52,7 @@ export const PLAN_BY_ID: Record<PlanId, Plan> = Object.fromEntries(
 ) as Record<PlanId, Plan>;
 
 export function isPlanId(v: string): v is PlanId {
-  return v === '0.5d' || v === '1d' || v === '7d' || v === '30d' || v === '30d-unlimited';
+  return v === '0.5d' || v === '1d' || v === '7d' || v === '30d' || v === '30d_light' || v === '30d-unlimited';
 }
 
 /**

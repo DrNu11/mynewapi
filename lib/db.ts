@@ -985,6 +985,14 @@ export function updateRequestLogStatus(logId: number, status?: number, model?: s
     .run(status ?? null, model ?? null, logId);
 }
 
+/** 统计某张卡从 sinceSec 到现在的请求次数(用于轻度月卡滚动窗口限额) */
+export function countCardRequestsSince(cardId: number, sinceSec: number): number {
+  const row = db()
+    .prepare('SELECT COUNT(*) as c FROM request_logs WHERE card_id = ? AND ts >= ?')
+    .get(cardId, sinceSec) as { c: number };
+  return row.c;
+}
+
 /** 当前自然小时内 sk-key 调用过的模型分布(按次数倒序) */
 export function getModelsUsedCurrentHour(skKey: string): Array<{ model: string; count: number }> {
   const now = Math.floor(Date.now() / 1000);
