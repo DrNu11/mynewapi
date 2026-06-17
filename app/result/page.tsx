@@ -561,8 +561,8 @@ export default function ResultPage() {
           );
         })()}
 
-        {/* 速率限制 + 实时用量 */}
-        {data.rph > 0 && (
+        {/* 速率限制 + 实时用量(轻度月卡不显示每小时限制) */}
+        {data.rph > 0 && data.plan !== '30d_light' && (
           <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/5 p-5">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-sm font-medium text-blue-200">
@@ -682,6 +682,36 @@ export default function ResultPage() {
           </div>
         )}
 
+        {/* 轻度月卡调用额度说明(隐藏每小时限制,显示点数制额度) */}
+        {data.plan === '30d_light' && (
+          <div className="mt-4 rounded-xl border border-purple-500/30 bg-purple-500/5 p-5">
+            <div className="flex items-center gap-1.5 text-sm font-medium text-purple-200">
+              <Zap className="h-4 w-4" />
+              套餐额度
+            </div>
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center justify-between rounded-lg border border-purple-500/20 bg-purple-500/5 px-4 py-3">
+                <span className="text-sm text-purple-200">近 24 小时调用额度</span>
+                <span className="font-mono text-sm text-purple-100">0 / 2000 点</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-purple-500/20 bg-purple-500/5 px-4 py-3">
+                <span className="text-sm text-purple-200">近 7 天调用额度</span>
+                <span className="font-mono text-sm text-purple-100">0 / 10000 点</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-purple-500/20 bg-purple-500/5 px-4 py-3">
+                <span className="text-sm text-purple-200">月卡总调用额度</span>
+                <span className="font-mono text-sm text-purple-100">0 / 40000 点</span>
+              </div>
+            </div>
+            <div className="mt-4 rounded-lg bg-purple-500/10 px-4 py-3">
+              <p className="text-xs text-purple-200/80">
+                <span className="font-medium">模型消耗说明：</span>
+                deepseek-v4-flash 每次消耗 <span className="font-mono text-purple-100">1</span> 点，deepseek-v4-pro 每次消耗 <span className="font-mono text-purple-100">3</span> 点。适合轻度使用场景。
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* 数据看板 — 套餐使用情况(总览 + 7 天趋势 + 模型 top),没数据也显示 0 */}
         {usage && (
           <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/60 p-5">
@@ -735,7 +765,7 @@ export default function ResultPage() {
                   {data.category_label ?? '—'}
                 </div>
                 <div className="mt-0.5 text-[10px] text-slate-500">
-                  每小时上限 {data.rph || '不限'}
+                  {data.plan === '30d_light' ? 'flash 1点/次 · pro 3点/次' : `每小时上限 ${data.rph || '不限'}`}
                 </div>
               </div>
             </div>

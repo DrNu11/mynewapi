@@ -14,7 +14,7 @@ import {
   getCardByTokenKey,
   reserveCurrentHourRequest,
   updateRequestLogStatus,
-  countCardRequestsSince,
+  countCardWeightedPoints,
 } from '@/lib/db';
 import { isCategory, legacyModels, modelsForCategory } from '@/lib/categories';
 import {
@@ -559,8 +559,8 @@ async function handle(req: NextRequest, pathParts: string[]) {
     }
   }
 
-  // 4.3 轻度月卡请求次数限额(仅 plan === '30d_light')
-  // 滚动窗口: 24h 2000次, 7d 10000次, lifetime 40000次
+  // 4.3 轻度月卡调用额度限额(仅 plan === '30d_light')
+  // 加权计数: flash=1点, pro=3点; 24h 2000点, 7d 10000点, lifetime 40000点
   if (card.plan === '30d_light' && card.activated_at) {
     const LIGHT_24H_LIMIT = 2000;
     const LIGHT_7D_LIMIT = 10000;
@@ -569,29 +569,29 @@ async function handle(req: NextRequest, pathParts: string[]) {
     const since24h = now - 24 * 3600;
     const since7d = now - 7 * 24 * 3600;
 
-    const used24h = countCardRequestsSince(card.id, since24h);
+    const used24h = countCardWeightedPoints(card.id, since24h);
     if (used24h >= LIGHT_24H_LIMIT) {
       return jsonError(
         429,
-        `该 DeepSeek 轻度月卡近 24 小时请求次数已用完（${used24h}/${LIGHT_24H_LIMIT}），请稍后再试。`,
+        `该 DeepSeek 轻度月卡近 24 小时调用额度已用完（${used24h}/${LIGHT_24H_LIMIT}），请稍后再试。`,
         'deepseek_light_month_24h_limit_exceeded'
       );
     }
 
-    const used7d = countCardRequestsSince(card.id, since7d);
+    const used7d = countCardWeightedPoints(card.id, since7d);
     if (used7d >= LIGHT_7D_LIMIT) {
       return jsonError(
         429,
-        `该 DeepSeek 轻度月卡近 7 天请求次数已用完（${used7d}/${LIGHT_7D_LIMIT}），请稍后再试。`,
+        `该 DeepSeek 轻度月卡近 7 天调用额度已用完（${used7d}/${LIGHT_7D_LIMIT}），请稍后再试。`,
         'deepseek_light_month_7d_limit_exceeded'
       );
     }
 
-    const usedTotal = countCardRequestsSince(card.id, card.activated_at);
+    const usedTotal = countCardWeightedPoints(card.id, card.activated_at);
     if (usedTotal >= LIGHT_LIFETIME_LIMIT) {
       return jsonError(
         429,
-        `该 DeepSeek 轻度月卡总请求次数已用完（${usedTotal}/${LIGHT_LIFETIME_LIMIT}），无法继续请求。`,
+        `该 DeepSeek 轻度月卡总调用额度已用完（${usedTotal}/${LIGHT_LIFETIME_LIMIT}），无法继续请求。`,
         'deepseek_light_month_total_limit_exceeded'
       );
     }
