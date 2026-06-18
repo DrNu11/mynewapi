@@ -1006,6 +1006,21 @@ export function countCardRequestsSince(cardId: number, sinceSec: number): number
   return row.c;
 }
 
+/** 当前自然小时内某张卡密(card_id)的请求数(整点固定窗口) */
+export function countCurrentHourRequestsByCard(cardId: number): {
+  used: number;
+  hourStart: number;
+  nextResetAt: number;
+} {
+  const now = Math.floor(Date.now() / 1000);
+  const hourStart = Math.floor(now / 3600) * 3600;
+  const nextResetAt = hourStart + 3600;
+  const row = db()
+    .prepare('SELECT COUNT(*) as c FROM request_logs WHERE card_id = ? AND ts >= ?')
+    .get(cardId, hourStart) as { c: number };
+  return { used: row.c, hourStart, nextResetAt };
+}
+
 /** DeepSeek 轻度月卡模型消耗权重：flash=1点, pro=3点 */
 export function getDeepSeekLightRequestWeight(model: string | null): number {
   if (model === 'deepseek-v4-pro') return 3;
@@ -1056,9 +1071,18 @@ export function applyRphBonus(code: string): Card | null {
   const card = getCardByCode(code);
   if (!card) return null;
   if (!isRphBonusEligible(card)) return null;
-  db().prepare(
-    'UPDATE cards SET rph_bonus = 55, rph_bonus_reason = ?, rph_bonus_at = ? WHERE code = ?'
-  ).run('good_review', now, code);
+
+  // 续费场景：同一 newapi_token_key 可能被多张卡共享。getCardByTokenKey 返回
+  // 最小 id 的那张，所以加成必须同步到所有共享该 token 的卡，否则代理侧读不到。
+  if (card.newapi_token_key) {
+    db().prepare(
+      'UPDATE cards SET rph_bonus = 55, rph_bonus_reason = ?, rph_bonus_at = ? WHERE newapi_token_key = ?'
+    ).run('good_review', now, card.newapi_token_key);
+  } else {
+    db().prepare(
+      'UPDATE cards SET rph_bonus = 55, rph_bonus_reason = ?, rph_bonus_at = ? WHERE code = ?'
+    ).run('good_review', now, code);
+  }
   return getCardByCode(code);
 }
 
@@ -1066,9 +1090,16 @@ export function applyRphBonus(code: string): Card | null {
 export function clearRphBonus(code: string): Card | null {
   const card = getCardByCode(code);
   if (!card) return null;
-  db().prepare(
-    'UPDATE cards SET rph_bonus = 0, rph_bonus_reason = NULL, rph_bonus_at = NULL WHERE code = ?'
-  ).run(code);
+
+  if (card.newapi_token_key) {
+    db().prepare(
+      'UPDATE cards SET rph_bonus = 0, rph_bonus_reason = NULL, rph_bonus_at = NULL WHERE newapi_token_key = ?'
+    ).run(card.newapi_token_key);
+  } else {
+    db().prepare(
+      'UPDATE cards SET rph_bonus = 0, rph_bonus_reason = NULL, rph_bonus_at = NULL WHERE code = ?'
+    ).run(code);
+  }
   return getCardByCode(code);
 }
 
@@ -1416,6 +1447,15 @@ export function applyRenewal(args: {
     `).run(now, args.afterExpiresAt, args.newapiUserId, args.newapiTokenId, args.newapiTokenKey,
       args.renewalIp, args.renewalCardId);
     if (u2.changes !== 1) throw new Error('renewal card finalize failed (state changed?)');
+
+    // 续费卡若在激活前就已获得 RPH 加成，同步到共享该 token 的所有卡
+    // 因为 getCardByTokenKey 返回最小 id 行，只加在续费卡上代理侧读不到。
+    const renewalCard = db().prepare('SELECT rph_bonus, rph_bonus_reason, rph_bonus_at FROM cards WHERE id = ?').get(args.renewalCardId) as { rph_bonus: number; rph_bonus_reason: string | null; rph_bonus_at: number | null } | undefined;
+    if (renewalCard && renewalCard.rph_bonus > 0) {
+      db().prepare(
+        'UPDATE cards SET rph_bonus = ?, rph_bonus_reason = ?, rph_bonus_at = ? WHERE newapi_token_key = ?'
+      ).run(renewalCard.rph_bonus, renewalCard.rph_bonus_reason, renewalCard.rph_bonus_at, args.newapiTokenKey);
+    }
 
     return Number(r.lastInsertRowid);
   });
