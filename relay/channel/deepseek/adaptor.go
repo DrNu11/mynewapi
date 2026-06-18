@@ -185,6 +185,12 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 			}
 			return deepSeekChatToResponsesHandler(c, info, resp)
 		}
+		if info.RelayMode == constant.RelayModeChatCompletions {
+			if info.IsStream {
+				return deepSeekChatStreamToClientHandler(c, info, resp)
+			}
+			return deepSeekChatToClientHandler(c, info, resp)
+		}
 		adaptor := openai.Adaptor{}
 		return adaptor.DoResponse(c, resp, info)
 	}

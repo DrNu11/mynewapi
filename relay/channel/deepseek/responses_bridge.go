@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
@@ -377,6 +378,127 @@ func responsesTextToChatResponseFormat(raw json.RawMessage) *dto.ResponseFormat 
 		}
 	}
 	return out
+}
+
+func deepSeekChatToClientHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if resp == nil || resp.Body == nil {
+		return nil, types.NewOpenAIError(errors.New("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+	defer service.CloseResponseBodyGracefully(resp)
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
+	}
+
+	var chatResp dto.OpenAITextResponse
+	if err := common.Unmarshal(body, &chatResp); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	if oaiError := chatResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	}
+
+	model := clientFacingModel(info, chatResp.Model)
+	if model != "" {
+		chatResp.Model = model
+	}
+	usage := &chatResp.Usage
+	if usage.TotalTokens == 0 {
+		var text strings.Builder
+		for _, choice := range chatResp.Choices {
+			text.WriteString(choice.Message.StringContent())
+			text.WriteString(choice.Message.GetReasoningContent())
+		}
+		usage = service.ResponseText2Usage(c, text.String(), model, info.GetEstimatePromptTokens())
+		chatResp.Usage = *usage
+	}
+
+	responseBody, err := common.Marshal(chatResp)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+	}
+	service.IOCopyBytesGracefully(c, resp, responseBody)
+	return usage, nil
+}
+
+func deepSeekChatStreamToClientHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if resp == nil || resp.Body == nil {
+		return nil, types.NewOpenAIError(errors.New("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+	defer service.CloseResponseBodyGracefully(resp)
+
+	model := clientFacingModel(info, "")
+	responseID := helper.GetResponseID(c)
+	created := time.Now().Unix()
+	var systemFingerprint *string
+	usage := &dto.Usage{}
+	containUsage := false
+	var responseText strings.Builder
+	var streamErr *types.NewAPIError
+
+	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		if strings.TrimSpace(data) == "" {
+			return
+		}
+		var chunk dto.ChatCompletionsStreamResponse
+		if err := common.UnmarshalJsonStr(data, &chunk); err != nil {
+			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			sr.Stop(err)
+			return
+		}
+		if chunk.Id != "" {
+			responseID = chunk.Id
+		}
+		if chunk.Created > 0 {
+			created = chunk.Created
+		}
+		if model == "" {
+			model = clientFacingModel(info, chunk.Model)
+		}
+		if model != "" {
+			chunk.Model = model
+		}
+		systemFingerprint = chunk.SystemFingerprint
+		if service.ValidUsage(chunk.Usage) {
+			usage = chunk.Usage
+			containUsage = true
+		}
+		for _, choice := range chunk.Choices {
+			responseText.WriteString(choice.Delta.GetContentString())
+			responseText.WriteString(choice.Delta.GetReasoningContent())
+			for _, tool := range choice.Delta.ToolCalls {
+				responseText.WriteString(tool.Function.Name)
+				responseText.WriteString(tool.Function.Arguments)
+			}
+		}
+		chunkData, err := common.Marshal(chunk)
+		if err != nil {
+			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+			sr.Stop(err)
+			return
+		}
+		if err := openaichannel.HandleStreamFormat(c, info, string(chunkData), info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			sr.Stop(err)
+		}
+	})
+	if streamErr != nil {
+		return nil, streamErr
+	}
+
+	if !containUsage {
+		usage = service.ResponseText2Usage(c, responseText.String(), model, info.GetEstimatePromptTokens())
+	}
+	if info.ShouldIncludeUsage && !containUsage {
+		finalUsage := helper.GenerateFinalUsageResponse(responseID, created, model, *usage)
+		if systemFingerprint != nil {
+			finalUsage.SetSystemFingerprint(*systemFingerprint)
+		}
+		helper.ObjectData(c, finalUsage)
+	}
+	helper.Done(c)
+	return usage, nil
 }
 
 func deepSeekChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
