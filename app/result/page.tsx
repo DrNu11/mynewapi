@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2, Film } from 'lucide-react';
 import { formatDaysCN } from '@/lib/plans';
+import PublicStatusPanel from '@/components/public-status-panel';
 
 interface ResultData {
   api_key: string;
@@ -364,7 +365,8 @@ export default function ResultPage() {
       : `${remainHours.toFixed(1)} 小时`;
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-      <div className="mx-auto max-w-3xl px-6 pt-12 pb-20">
+      <div className="mx-auto grid w-full max-w-7xl gap-6 px-6 pt-12 pb-20 lg:grid-cols-[minmax(0,48rem)_minmax(22rem,26rem)] lg:items-start">
+        <div className="min-w-0">
         <button
           type="button"
           onClick={handleBackToHome}
@@ -1229,6 +1231,11 @@ claude`}
         <div className="mt-8 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
           ⚠ 卡密一经激活即开始计时。如需重新查看,可在首页重新输入同一卡密(到期前有效)。
         </div>
+        </div>
+
+        <aside className="min-w-0 lg:sticky lg:top-6">
+          <PublicStatusPanel />
+        </aside>
       </div>
     </main>
   );
