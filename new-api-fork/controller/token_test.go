@@ -48,21 +48,21 @@ type sqliteColumnInfo struct {
 }
 
 type legacyToken struct {
-	Id                 int            `gorm:"primaryKey"`
-	UserId             int            `gorm:"index"`
-	Key                string         `gorm:"column:key;type:char(48);uniqueIndex"`
-	Status             int            `gorm:"default:1"`
-	Name               string         `gorm:"index"`
-	CreatedTime        int64          `gorm:"bigint"`
-	AccessedTime       int64          `gorm:"bigint"`
-	ExpiredTime        int64          `gorm:"bigint;default:-1"`
-	RemainQuota        int            `gorm:"default:0"`
+	Id                 int    `gorm:"primaryKey"`
+	UserId             int    `gorm:"index"`
+	Key                string `gorm:"column:key;type:char(48);uniqueIndex"`
+	Status             int    `gorm:"default:1"`
+	Name               string `gorm:"index"`
+	CreatedTime        int64  `gorm:"bigint"`
+	AccessedTime       int64  `gorm:"bigint"`
+	ExpiredTime        int64  `gorm:"bigint;default:-1"`
+	RemainQuota        int    `gorm:"default:0"`
 	UnlimitedQuota     bool
 	ModelLimitsEnabled bool
-	ModelLimits        string         `gorm:"type:text"`
-	AllowIps           *string        `gorm:"default:''"`
-	UsedQuota          int            `gorm:"default:0"`
-	Group              string         `gorm:"column:group;default:''"`
+	ModelLimits        string  `gorm:"type:text"`
+	AllowIps           *string `gorm:"default:''"`
+	UsedQuota          int     `gorm:"default:0"`
+	Group              string  `gorm:"column:group;default:''"`
 	CrossGroupRetry    bool
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
@@ -436,6 +436,60 @@ func TestSearchTokensMasksKeyInResponse(t *testing.T) {
 	}
 	if len(page.Items) != 1 {
 		t.Fatalf("expected exactly one search result, got %d", len(page.Items))
+	}
+	if page.Items[0].Key != token.GetMaskedKey() {
+		t.Fatalf("expected masked search key %q, got %q", token.GetMaskedKey(), page.Items[0].Key)
+	}
+	if strings.Contains(recorder.Body.String(), token.Key) {
+		t.Fatalf("search response leaked raw token key: %s", recorder.Body.String())
+	}
+}
+
+func TestSearchTokensKeywordMatchesTokenKey(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "customer-code", "DE-EKNC-Z7DT-2BY6-secret")
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/search?keyword=%DE-EKNC-Z7DT-2BY6%&p=1&size=10", nil, 1)
+	SearchTokens(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+
+	var page tokenPageResponse
+	if err := common.Unmarshal(response.Data, &page); err != nil {
+		t.Fatalf("failed to decode search response: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("expected exactly one key search result, got %d", len(page.Items))
+	}
+	if page.Items[0].Key != token.GetMaskedKey() {
+		t.Fatalf("expected masked search key %q, got %q", token.GetMaskedKey(), page.Items[0].Key)
+	}
+	if strings.Contains(recorder.Body.String(), token.Key) {
+		t.Fatalf("search response leaked raw token key: %s", recorder.Body.String())
+	}
+}
+
+func TestSearchTokensKeywordMatchesSkPrefixedTokenKey(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "prefixed-search", "abc123XYZ789")
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/search?keyword=%sk-abc123%&p=1&size=10", nil, 1)
+	SearchTokens(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+
+	var page tokenPageResponse
+	if err := common.Unmarshal(response.Data, &page); err != nil {
+		t.Fatalf("failed to decode search response: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("expected exactly one prefixed key search result, got %d", len(page.Items))
 	}
 	if page.Items[0].Key != token.GetMaskedKey() {
 		t.Fatalf("expected masked search key %q, got %q", token.GetMaskedKey(), page.Items[0].Key)

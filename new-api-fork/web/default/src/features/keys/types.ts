@@ -75,6 +75,8 @@ export interface GetApiKeysResponse {
   }
 }
 
+export type SearchApiKeysResponse = GetApiKeysResponse
+
 export interface SearchApiKeysParams {
   keyword?: string
   token?: string

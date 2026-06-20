@@ -22,6 +22,7 @@ import type {
   ApiResponse,
   GetApiKeysParams,
   GetApiKeysResponse,
+  SearchApiKeysResponse,
   SearchApiKeysParams,
   ApiKeyFormData,
 } from './types'
@@ -42,7 +43,7 @@ export async function getApiKeys(
 // Search API keys by keyword or token (with pagination)
 export async function searchApiKeys(
   params: SearchApiKeysParams
-): Promise<{ success: boolean; message?: string; data?: ApiKey[] }> {
+): Promise<SearchApiKeysResponse> {
   const { keyword = '', token = '', p, size } = params
   const queryParams = new URLSearchParams()
   if (keyword) queryParams.set('keyword', keyword)
