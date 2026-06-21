@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import mysql from 'mysql2/promise';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -22,6 +23,9 @@ export interface PublicStatusService {
   successRate1h: number | null;
   successRate24h: number | null;
   tokens24h: number | null;
+  rpm1h: number | null;
+  tpm24h: number | null;
+  typicalLatencyMs: number | null;
   avgLatencyMs: number | null;
   p95LatencyMs: number | null;
   consecutiveFailures: number;
@@ -55,6 +59,15 @@ interface AuditMetricRow {
   duration_ms: number | null;
 }
 
+interface NewApiServiceMetrics {
+  tokens24h: number | null;
+  rpm1h: number | null;
+  tpm24h: number | null;
+  typicalLatencyMs: number | null;
+  avgLatencyMs: number | null;
+  p95LatencyMs: number | null;
+}
+
 const SERVICES: Array<{ key: PublicServiceKey; name: string }> = [
   { key: 'gpt', name: 'GPT' },
   { key: 'claude', name: 'Claude' },
@@ -67,6 +80,9 @@ const DAILY_HOURS = 24;
 const HISTORY_HOURS = 48;
 const BUCKET_MINUTES = 30;
 const HISTORY_BUCKETS = (HISTORY_HOURS * 60) / BUCKET_MINUTES;
+const MAX_AUDIT_DB_BYTES = 512 * 1024 * 1024;
+
+let newApiPool: mysql.Pool | null = null;
 
 export function classifyPublicService(model: string | null | undefined): PublicServiceKey | null {
   if (!model) return null;
@@ -156,10 +172,18 @@ export function formatLatencyMs(ms: number | null): string {
 
 export async function getPublicStatusSnapshot(nowMs = Date.now()): Promise<PublicStatusResponse> {
   const cardsDb = openReadonlyDb(cardsDbPath());
-  const auditDb = openReadonlyDb(auditDbPath());
+  const auditDb = openReadonlyDb(auditDbPath(), MAX_AUDIT_DB_BYTES);
   try {
+    const newApiMetrics = await selectNewApiServiceMetrics(nowMs);
     const services = SERVICES.map((service) =>
-      buildServiceSnapshot(service.key, service.name, cardsDb, auditDb, nowMs),
+      buildServiceSnapshot(
+        service.key,
+        service.name,
+        cardsDb,
+        auditDb,
+        newApiMetrics.get(service.key) ?? null,
+        nowMs,
+      ),
     );
 
     return {
@@ -184,6 +208,7 @@ function buildServiceSnapshot(
   name: string,
   cardsDb: Database.Database | null,
   auditDb: Database.Database | null,
+  newApiMetrics: NewApiServiceMetrics | null,
   nowMs: number,
 ): PublicStatusService {
   const nowSec = Math.floor(nowMs / 1000);
@@ -200,12 +225,19 @@ function buildServiceSnapshot(
   const latencyValues = metrics
     .map((row) => row.duration_ms)
     .filter((value): value is number => typeof value === 'number' && value >= 0);
-  const tokens24h = sumTokens(metrics);
-  const avgLatencyMs =
+  const auditTokens24h = sumTokens(metrics);
+  const tokens24h = newApiMetrics?.tokens24h ?? auditTokens24h;
+  const rpm1h = calculatePerMinute(stats1h.total, RECENT_MINUTES);
+  const tpm24h = tokens24h === null ? null : calculatePerMinute(tokens24h, DAILY_HOURS * 60);
+  const auditTypicalLatencyMs = percentile(latencyValues, 0.5);
+  const auditAvgLatencyMs =
     latencyValues.length > 0
       ? Math.round(latencyValues.reduce((sum, value) => sum + value, 0) / latencyValues.length)
       : null;
-  const p95LatencyMs = percentile(latencyValues, 0.95);
+  const auditP95LatencyMs = percentile(latencyValues, 0.95);
+  const typicalLatencyMs = newApiMetrics?.typicalLatencyMs ?? auditTypicalLatencyMs;
+  const avgLatencyMs = newApiMetrics?.avgLatencyMs ?? auditAvgLatencyMs;
+  const p95LatencyMs = newApiMetrics?.p95LatencyMs ?? auditP95LatencyMs;
   const status = calculatePublicStatus({
     successRate1h,
     successRate24h,
@@ -222,6 +254,9 @@ function buildServiceSnapshot(
     successRate1h,
     successRate24h,
     tokens24h,
+    rpm1h: newApiMetrics?.rpm1h ?? rpm1h,
+    tpm24h: newApiMetrics?.tpm24h ?? tpm24h,
+    typicalLatencyMs,
     avgLatencyMs,
     p95LatencyMs,
     consecutiveFailures,
@@ -229,6 +264,101 @@ function buildServiceSnapshot(
     requests24h: stats24h.total,
     history: buildHistory(rows, nowMs),
   };
+}
+
+async function selectNewApiServiceMetrics(nowMs: number): Promise<Map<PublicServiceKey, NewApiServiceMetrics>> {
+  const dsn = process.env.NEWAPI_SQL_DSN || process.env.SQL_DSN;
+  if (!dsn) return new Map();
+
+  const since24h = Math.floor(nowMs / 1000) - DAILY_HOURS * 3600;
+  const since1h = Math.floor(nowMs / 1000) - RECENT_MINUTES * 60;
+
+  try {
+    const [rows] = await newApiDbPool(dsn).query<mysql.RowDataPacket[]>(
+      `WITH base AS (
+        SELECT
+          CASE
+            WHEN LOWER(model_name) LIKE '%deepseek%' THEN 'deepseek'
+            WHEN LOWER(model_name) LIKE '%claude%'
+              OR LOWER(model_name) LIKE '%sonnet%'
+              OR LOWER(model_name) LIKE '%haiku%'
+              OR LOWER(model_name) LIKE '%opus%'
+              OR LOWER(model_name) LIKE '%anthropic%' THEN 'claude'
+            WHEN LOWER(model_name) LIKE '%gpt%' OR LOWER(model_name) LIKE '%openai%' THEN 'gpt'
+            ELSE NULL
+          END AS service,
+          created_at,
+          COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0) AS tokens,
+          use_time
+        FROM logs
+        WHERE type = 2
+          AND created_at >= ?
+          AND model_name IS NOT NULL
+          AND LOWER(model_name) NOT LIKE '%minimax%'
+          AND LOWER(model_name) NOT LIKE '%hailuo%'
+          AND LOWER(model_name) NOT LIKE '%abab%'
+          AND LOWER(model_name) NOT LIKE '%video%'
+      ),
+      filtered AS (
+        SELECT * FROM base WHERE service IS NOT NULL
+      ),
+      agg AS (
+        SELECT
+          service,
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS requests_1h,
+          SUM(tokens) AS tokens_24h,
+          AVG(CASE WHEN use_time > 0 THEN use_time ELSE NULL END) AS avg_use_time
+        FROM filtered
+        GROUP BY service
+      ),
+      ranked AS (
+        SELECT
+          service,
+          use_time,
+          ROW_NUMBER() OVER (PARTITION BY service ORDER BY use_time) AS rn,
+          COUNT(*) OVER (PARTITION BY service) AS cnt
+        FROM filtered
+        WHERE use_time > 0
+      ),
+      pct AS (
+        SELECT
+          service,
+          MIN(CASE WHEN rn >= CEIL(cnt * 0.50) THEN use_time END) AS p50_use_time,
+          MIN(CASE WHEN rn >= CEIL(cnt * 0.95) THEN use_time END) AS p95_use_time
+        FROM ranked
+        GROUP BY service
+      )
+      SELECT
+        agg.service,
+        agg.requests_1h,
+        agg.tokens_24h,
+        agg.avg_use_time,
+        pct.p50_use_time,
+        pct.p95_use_time
+      FROM agg
+      LEFT JOIN pct ON pct.service = agg.service`,
+      [since24h, since1h],
+    );
+
+    const result = new Map<PublicServiceKey, NewApiServiceMetrics>();
+    for (const row of rows) {
+      const service = row.service as PublicServiceKey | null;
+      if (service !== 'gpt' && service !== 'claude' && service !== 'deepseek') continue;
+      const tokens24h = toNullableNumber(row.tokens_24h);
+      const requests1h = toNullableNumber(row.requests_1h);
+      result.set(service, {
+        tokens24h,
+        rpm1h: requests1h === null ? null : calculatePerMinute(requests1h, RECENT_MINUTES),
+        tpm24h: tokens24h === null ? null : calculatePerMinute(tokens24h, DAILY_HOURS * 60),
+        typicalLatencyMs: secondsToMs(row.p50_use_time),
+        avgLatencyMs: secondsToMs(row.avg_use_time),
+        p95LatencyMs: secondsToMs(row.p95_use_time),
+      });
+    }
+    return result;
+  } catch {
+    return new Map();
+  }
 }
 
 function selectRequestRows(
@@ -437,6 +567,17 @@ function sumTokens(rows: AuditMetricRow[]): number | null {
   return hasAny ? total : null;
 }
 
+function calculatePerMinute(total: number, minutes: number): number | null {
+  if (total <= 0 || minutes <= 0) return null;
+  return Number((total / minutes).toFixed(1));
+}
+
+function secondsToMs(value: unknown): number | null {
+  const seconds = toNullableNumber(value);
+  if (seconds === null || seconds <= 0) return null;
+  return Math.round(seconds * 1000);
+}
+
 function percentile(values: number[], p: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -462,9 +603,53 @@ function auditDbPath(): string {
   return path.join(dataDir, 'audit.db');
 }
 
-function openReadonlyDb(dbPath: string): Database.Database | null {
+function openReadonlyDb(dbPath: string, maxBytes?: number): Database.Database | null {
   if (!fs.existsSync(dbPath)) return null;
+  if (maxBytes !== undefined) {
+    const stat = fs.statSync(dbPath);
+    if (stat.size > maxBytes) return null;
+  }
   return new Database(dbPath, { readonly: true, fileMustExist: true });
+}
+
+function newApiDbPool(dsn: string): mysql.Pool {
+  if (newApiPool) return newApiPool;
+  newApiPool = mysql.createPool({
+    ...parseMysqlDsn(dsn),
+    waitForConnections: true,
+    connectionLimit: 2,
+    connectTimeout: 2000,
+    namedPlaceholders: true,
+    charset: 'utf8mb4',
+  });
+  return newApiPool;
+}
+
+function parseMysqlDsn(dsn: string): mysql.PoolOptions {
+  if (dsn.startsWith('mysql://')) {
+    const url = new URL(dsn);
+    return {
+      host: url.hostname,
+      port: url.port ? Number(url.port) : 3306,
+      user: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+      database: url.pathname.replace(/^\//, ''),
+    };
+  }
+
+  const match = /^([^:]+):(.*)@tcp\(([^)]+)\)\/([^?]+)(?:\?(.*))?$/.exec(dsn);
+  if (!match) throw new Error('Invalid MySQL DSN');
+  const [, user, password, hostPort, database] = match;
+  const idx = hostPort.lastIndexOf(':');
+  const host = idx >= 0 ? hostPort.slice(0, idx) : hostPort;
+  const port = idx >= 0 ? Number(hostPort.slice(idx + 1)) : 3306;
+  return {
+    host,
+    port,
+    user,
+    password,
+    database,
+  };
 }
 
 function tableExists(db: Database.Database, tableName: string): boolean {

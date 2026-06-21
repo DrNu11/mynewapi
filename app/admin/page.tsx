@@ -690,6 +690,9 @@ ${modelsList}
           )}
         </section>
 
+        {/* 续期 */}
+        <RenewSection />
+
         {/* 列表 */}
         <section className="mt-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1056,6 +1059,104 @@ ${modelsList}
         )}
       </div>
     </main>
+  );
+}
+
+function RenewSection() {
+  const [code, setCode] = useState('');
+  const [days, setDays] = useState('7');
+  const [renewing, setRenewing] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  async function renew() {
+    const trimmed = code.trim();
+    if (!trimmed) { setResult({ ok: false, msg: '请输入卡密' }); return; }
+    const daysNum = parseFloat(days);
+    if (!Number.isFinite(daysNum) || daysNum <= 0 || daysNum > 3650) {
+      setResult({ ok: false, msg: '天数须为 0.01 ~ 3650' });
+      return;
+    }
+    setRenewing(true);
+    setResult(null);
+    try {
+      const res = await fetch('/api/admin/cards/extend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: trimmed, days: daysNum }),
+      });
+      const body = await res.json();
+      if (body.success) {
+        const c = body.data.card;
+        const fmt = (t: number | null) => t ? new Date(t * 1000).toLocaleString('zh-CN', { hour12: false }) : '-';
+        setResult({
+          ok: true,
+          msg: `续期成功! 卡密 ${c.code} 到期时间: ${fmt(body.data.before_expires_at)} → ${fmt(body.data.after_expires_at)} (+${body.data.added_days} 天)`,
+        });
+        setCode('');
+      } else {
+        setResult({ ok: false, msg: body.message || '续期失败' });
+      }
+    } catch (e: any) {
+      setResult({ ok: false, msg: e?.message || '网络错误' });
+    } finally {
+      setRenewing(false);
+    }
+  }
+
+  return (
+    <section className="mt-8 rounded-xl border border-amber-500/40 bg-amber-500/5 p-5">
+      <h2 className="flex items-center gap-2 text-sm font-medium text-amber-300">
+        <RotateCcw className="h-4 w-4" />
+        卡密续期 (保留原 API Key)
+      </h2>
+      <p className="mt-1 text-xs text-slate-400">
+        输入已激活的卡密, 延长到期时间。客户无需更换密钥。
+      </p>
+      <div className="mt-4 flex flex-wrap items-end gap-3">
+        <div className="flex-1 min-w-[240px]">
+          <label className="text-xs text-slate-400">卡密</label>
+          <input
+            type="text"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="例如: DE-XXXX-XXXX-XXXX"
+            className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none"
+            onKeyDown={(e) => e.key === 'Enter' && renew()}
+          />
+        </div>
+        <div className="w-28">
+          <label className="text-xs text-slate-400">续期天数</label>
+          <input
+            type="number"
+            min={0.01}
+            max={3650}
+            step={1}
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"
+          />
+        </div>
+        <button
+          onClick={renew}
+          disabled={renewing}
+          className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:bg-slate-700"
+        >
+          {renewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+          续期
+        </button>
+      </div>
+      {result && (
+        <div
+          className={`mt-3 rounded-lg border px-4 py-2 text-sm ${
+            result.ok
+              ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-300'
+              : 'border-red-500/40 bg-red-500/5 text-red-300'
+          }`}
+        >
+          {result.msg}
+        </div>
+      )}
+    </section>
   );
 }
 
