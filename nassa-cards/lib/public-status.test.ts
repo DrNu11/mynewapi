@@ -148,6 +148,8 @@ describe('getPublicStatusSnapshot schema downgrade', () => {
       async (snapshot) => {
         const gpt = snapshot.services.find((service) => service.key === 'gpt');
         expect(gpt?.tokens24h).toBeNull();
+        expect(gpt?.tpm24h).toBeNull();
+        expect(gpt?.typicalLatencyMs).toBe(123);
         expect(gpt?.p95LatencyMs).toBe(123);
       },
       (db, nowSec) => {
@@ -167,6 +169,8 @@ describe('getPublicStatusSnapshot schema downgrade', () => {
       async (snapshot) => {
         const gpt = snapshot.services.find((service) => service.key === 'gpt');
         expect(gpt?.tokens24h).toBe(345);
+        expect(gpt?.tpm24h).toBe(0.2);
+        expect(gpt?.typicalLatencyMs).toBeNull();
         expect(gpt?.avgLatencyMs).toBeNull();
         expect(gpt?.p95LatencyMs).toBeNull();
       },
@@ -180,12 +184,68 @@ describe('getPublicStatusSnapshot schema downgrade', () => {
       },
     );
   });
+
+  test('large audit.db is skipped instead of blocking public status', async () => {
+    await withTempStatusDb(
+      (_db) => undefined,
+      async (snapshot) => {
+        const gpt = snapshot.services.find((service) => service.key === 'gpt');
+        expect(gpt?.tokens24h).toBeNull();
+        expect(gpt?.tpm24h).toBeNull();
+        expect(gpt?.typicalLatencyMs).toBeNull();
+        expect(gpt?.avgLatencyMs).toBeNull();
+        expect(gpt?.p95LatencyMs).toBeNull();
+      },
+      undefined,
+      ({ auditPath }) => {
+        fs.closeSync(fs.openSync(auditPath, 'w'));
+        fs.truncateSync(auditPath, 513 * 1024 * 1024);
+      },
+    );
+  });
+
+  test('calculates RPM, TPM, and typical latency from available public metrics', async () => {
+    await withTempStatusDb(
+      (db, nowSec) => {
+        db.exec('CREATE TABLE request_logs (id INTEGER PRIMARY KEY, ts INTEGER, model TEXT, status INTEGER)');
+        for (let i = 0; i < 120; i += 1) {
+          db.prepare('INSERT INTO request_logs (ts, model, status) VALUES (?, ?, ?)').run(
+            nowSec - i * 20,
+            'gpt-4o',
+            200,
+          );
+        }
+      },
+      async (snapshot) => {
+        const gpt = snapshot.services.find((service) => service.key === 'gpt');
+        expect(gpt?.requests1h).toBe(120);
+        expect(gpt?.rpm1h).toBe(2);
+        expect(gpt?.tokens24h).toBe(144_000);
+        expect(gpt?.tpm24h).toBe(100);
+        expect(gpt?.typicalLatencyMs).toBe(120);
+        expect(gpt?.avgLatencyMs).toBe(355);
+        expect(gpt?.p95LatencyMs).toBe(1000);
+      },
+      (db, nowSec) => {
+        db.exec('CREATE TABLE conversation_logs (ts INTEGER, model TEXT, total_tokens INTEGER, duration_ms INTEGER)');
+        for (const duration of [80, 120, 220, 1000]) {
+          db.prepare('INSERT INTO conversation_logs (ts, model, total_tokens, duration_ms) VALUES (?, ?, ?, ?)').run(
+            nowSec,
+            'gpt-4o',
+            36_000,
+            duration,
+          );
+        }
+      },
+    );
+  });
 });
 
 async function withTempStatusDb(
   setupCards: (db: Database.Database, nowSec: number) => void,
   assertSnapshot: (snapshot: Awaited<ReturnType<typeof getPublicStatusSnapshot>>) => Promise<void>,
   setupAudit?: (db: Database.Database, nowSec: number) => void,
+  setupFiles?: (paths: { dir: string; cardsPath: string; auditPath: string }) => void,
 ) {
   const oldDbPath = process.env.DB_PATH;
   const oldDataDir = process.env.DATA_DIR;
@@ -205,6 +265,7 @@ async function withTempStatusDb(
       setupAudit(auditDb, nowSec);
       auditDb.close();
     }
+    setupFiles?.({ dir, cardsPath, auditPath });
 
     process.env.DB_PATH = cardsPath;
     process.env.DATA_DIR = dir;

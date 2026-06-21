@@ -8,6 +8,8 @@
     "build": "next build",
     "start": "next start -p 3100",
     "gen-cards": "tsx scripts/gen-cards.ts",
+    "card-admin": "tsx scripts/card-admin-cli.ts",
+    "alert": "tsx scripts/alert-cli.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

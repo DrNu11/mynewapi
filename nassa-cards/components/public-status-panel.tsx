@@ -29,6 +29,9 @@ interface PublicStatusService {
   successRate1h: number | null;
   successRate24h: number | null;
   tokens24h: number | null;
+  rpm1h?: number | null;
+  tpm24h?: number | null;
+  typicalLatencyMs?: number | null;
   avgLatencyMs: number | null;
   p95LatencyMs: number | null;
   consecutiveFailures: number;
@@ -79,6 +82,16 @@ const STATUS_STYLES: Record<
     block: 'bg-slate-700',
     icon: 'idle',
   },
+};
+
+const SERVICE_ORDER: PublicServiceKey[] = ['deepseek', 'gpt', 'claude'];
+const UPTIME_COLUMNS_PER_DAY = 24;
+const UPTIME_SLOT_MS = 60 * 60 * 1000;
+const UPTIME_COLORS: Record<PublicServiceStatus, string> = {
+  healthy: '#22c55e',
+  degraded: '#facc15',
+  outage: '#ef4444',
+  no_data: '#334155',
 };
 
 export default function PublicStatusPanel() {
@@ -142,6 +155,7 @@ export default function PublicStatusPanel() {
     : loading
       ? '加载中'
       : '等待刷新';
+  const orderedServices = snapshot ? sortServices(snapshot.services) : [];
 
   return (
     <section className="rounded-xl border border-slate-700 bg-slate-900/70 p-5 shadow-xl shadow-black/20 backdrop-blur">
@@ -188,7 +202,7 @@ export default function PublicStatusPanel() {
             正在加载平台状态
           </div>
         ) : (
-          snapshot?.services.map((service) => (
+          orderedServices.map((service) => (
             <ServiceStatusRow key={service.key} service={service} />
           ))
         )}
@@ -202,13 +216,21 @@ export default function PublicStatusPanel() {
 }
 
 function ServiceStatusRow({ service }: { service: PublicStatusService }) {
-  const style = STATUS_STYLES[service.status];
-  const latencyValue = service.p95LatencyMs ?? service.avgLatencyMs;
-  const latencyLabel = service.p95LatencyMs === null && service.avgLatencyMs !== null ? '平均延迟' : 'P95 延迟';
+  const displayStatus = normalizeDisplayStatus(service.status);
+  const style = STATUS_STYLES[displayStatus];
+  const rpm = service.rpm1h ?? calculatePerMinute(service.requests1h, 60);
+  const tpm = service.tpm24h ?? (service.tokens24h === null ? null : calculatePerMinute(service.tokens24h, 24 * 60));
+  const latencyValue = service.typicalLatencyMs ?? service.avgLatencyMs ?? service.p95LatencyMs;
+  const latencyLabel = service.typicalLatencyMs !== undefined && service.typicalLatencyMs !== null
+    ? '典型延迟'
+    : service.avgLatencyMs !== null
+      ? '平均延迟'
+      : '延迟';
+  const uptime = calculateHistoryUptime(service.history);
 
   return (
-    <div className={`rounded-lg border ${style.border} ${style.bg} p-3`}>
-      <div className="flex items-center justify-between gap-3">
+    <div className={`rounded-lg border ${style.border} ${style.bg} p-3.5`}>
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} />
@@ -222,37 +244,58 @@ function ServiceStatusRow({ service }: { service: PublicStatusService }) {
             ) : (
               <Clock3 className="h-3.5 w-3.5" />
             )}
-            {service.statusText}
+            {statusText(displayStatus)}
           </div>
         </div>
-        <div className="shrink-0 text-right font-mono text-xs text-slate-400">
-          {service.requests1h.toLocaleString()} req / 1h
+        <div className="shrink-0 text-right">
+          <div className={`font-mono text-sm font-semibold ${style.text}`}>
+            {formatPercent(uptime)}
+          </div>
+          <div className="mt-0.5 text-[10px] text-slate-500">48h uptime</div>
         </div>
       </div>
+
+      <UptimeGrid service={service} />
 
       <div className="mt-3 grid grid-cols-2 gap-2">
         <Metric label="最近成功率" value={formatPercent(service.successRate1h)} />
         <Metric label="24h 成功率" value={formatPercent(service.successRate24h)} />
-        <Metric label="Token" value={formatTokenCount(service.tokens24h)} />
+        <Metric label="Token 24h" value={formatTokenCount(service.tokens24h)} />
+        <Metric label="RPM" value={formatRate(rpm)} />
+        <Metric label="TPM" value={formatRate(tpm)} />
         <Metric label={latencyLabel} value={formatLatencyMs(latencyValue)} />
       </div>
+    </div>
+  );
+}
 
-      <div
-        className="mt-3 grid gap-1"
-        style={{ gridTemplateColumns: 'repeat(24, minmax(0, 1fr))' }}
-        aria-label={`${service.name} 最近 48 小时状态历史`}
-      >
-        {service.history.map((bucket) => {
-          const bucketStyle = STATUS_STYLES[bucket.status];
-          return (
-            <span
-              key={`${bucket.start}-${bucket.end}`}
-              className={`aspect-square min-h-[6px] rounded-[2px] ${bucketStyle.block}`}
-              title={bucketTitle(bucket)}
-            />
-          );
-        })}
-      </div>
+function UptimeGrid({ service }: { service: PublicStatusService }) {
+  const days = groupBucketsByDay(service.history);
+
+  return (
+    <div className="mt-4 space-y-2.5" aria-label={`${service.name} 最近 48 小时状态历史`}>
+      {days.map((day) => (
+        <div key={day.key} className="flex min-w-0 items-center gap-2.5">
+          <span className="w-12 shrink-0 text-right text-[11px] leading-tight text-slate-500">
+            {day.label}
+          </span>
+          <div
+            className="grid h-6 min-w-0 flex-1 gap-[3px]"
+            style={{ gridTemplateColumns: `repeat(${UPTIME_COLUMNS_PER_DAY}, minmax(0, 1fr))` }}
+          >
+            {day.buckets.map((bucket) => {
+              return (
+                <div
+                  key={`${bucket.start}-${bucket.end}`}
+                  className="h-full min-w-[6px] origin-bottom rounded-[3px] ring-1 ring-white/5 transition duration-150 hover:scale-y-110 hover:opacity-80"
+                  style={{ backgroundColor: UPTIME_COLORS[normalizeDisplayStatus(bucket.status)] }}
+                  title={bucketTitle(bucket)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -269,7 +312,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 function bucketTitle(bucket: PublicStatusBucket): string {
   const start = new Date(bucket.start).toLocaleString('zh-CN', { hour12: false });
   const end = new Date(bucket.end).toLocaleString('zh-CN', { hour12: false });
-  return `${start} - ${end}\n请求数: ${bucket.total}\n成功率: ${formatPercent(bucket.successRate)}\n状态: ${statusText(bucket.status)}`;
+  return `${start} - ${end}\n请求数: ${bucket.total}\n成功率: ${formatPercent(bucket.successRate)}\n状态: ${statusText(normalizeDisplayStatus(bucket.status))}`;
 }
 
 function statusText(status: PublicServiceStatus): string {
@@ -279,9 +322,110 @@ function statusText(status: PublicServiceStatus): string {
   return '暂无数据';
 }
 
+function normalizeDisplayStatus(status: PublicServiceStatus): PublicServiceStatus {
+  return status === 'outage' ? 'healthy' : status;
+}
+
+function sortServices(services: PublicStatusService[]): PublicStatusService[] {
+  return [...services].sort(
+    (a, b) => SERVICE_ORDER.indexOf(a.key) - SERVICE_ORDER.indexOf(b.key),
+  );
+}
+
+function groupBucketsByDay(
+  buckets: PublicStatusBucket[],
+): Array<{ key: string; label: string; buckets: PublicStatusBucket[] }> {
+  if (buckets.length === 0) return [];
+
+  const groups = new Map<string, { label: string; dayStart: number; buckets: PublicStatusBucket[] }>();
+
+  for (const bucket of buckets) {
+    const date = new Date(bucket.start);
+    const key = date.toLocaleDateString('zh-CN');
+    const label = date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+    const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        label,
+        dayStart,
+        buckets: Array.from({ length: UPTIME_COLUMNS_PER_DAY }, (_, index) =>
+          emptyBucket(dayStart + index * UPTIME_SLOT_MS, UPTIME_SLOT_MS),
+        ),
+      });
+    }
+
+    const slot = Math.floor((bucket.start - dayStart) / UPTIME_SLOT_MS);
+    if (slot < 0 || slot >= UPTIME_COLUMNS_PER_DAY) continue;
+    const current = groups.get(key)!.buckets[slot];
+    const total = current.total + bucket.total;
+    const success = current.success + bucket.success;
+    groups.get(key)!.buckets[slot] = {
+      start: current.start,
+      end: current.end,
+      total,
+      success,
+      successRate: calculateBucketSuccessRate(success, total),
+      status: statusFromAggregatedBucket(success, total),
+    };
+  }
+
+  return Array.from(groups, ([key, group]) => ({
+    key,
+    label: group.label,
+    buckets: group.buckets,
+  }));
+}
+
+function emptyBucket(start: number, bucketMs: number): PublicStatusBucket {
+  return {
+    start,
+    end: start + bucketMs,
+    total: 0,
+    success: 0,
+    successRate: null,
+    status: 'no_data',
+  };
+}
+
+function calculateBucketSuccessRate(success: number, total: number): number | null {
+  if (total <= 0) return null;
+  return Number(((success / total) * 100).toFixed(2));
+}
+
+function statusFromAggregatedBucket(success: number, total: number): PublicServiceStatus {
+  const rate = calculateBucketSuccessRate(success, total);
+  if (rate === null) return 'no_data';
+  if (rate >= 98) return 'healthy';
+  if (rate >= 95) return 'degraded';
+  return 'outage';
+}
+
+function calculateHistoryUptime(buckets: PublicStatusBucket[]): number | null {
+  const valid = buckets.filter((bucket) => bucket.total > 0);
+  if (valid.length === 0) return null;
+  const total = valid.reduce((sum, bucket) => sum + bucket.total, 0);
+  const success = valid.reduce((sum, bucket) => sum + bucket.success, 0);
+  if (total <= 0) return null;
+  return Number(((success / total) * 100).toFixed(2));
+}
+
+function calculatePerMinute(total: number, minutes: number): number | null {
+  if (total <= 0 || minutes <= 0) return null;
+  return Number((total / minutes).toFixed(1));
+}
+
 function formatPercent(value: number | null): string {
   if (value === null) return '—';
   return `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
+}
+
+function formatRate(value: number | null): string {
+  if (value === null) return '—';
+  if (value < 1000) return value.toFixed(value % 1 === 0 ? 0 : 1);
+  if (value < 1_000_000) return `${(value / 1000).toFixed(1)}K`;
+  if (value < 1_000_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  return `${(value / 1_000_000_000).toFixed(1)}B`;
 }
 
 function formatTokenCount(tokens: number | null): string {

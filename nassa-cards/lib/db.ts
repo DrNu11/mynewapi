@@ -1323,6 +1323,23 @@ export function activateCard(
   `).run(Math.floor(Date.now() / 1000), expiresAt, tokenId, tokenKey, code);
 }
 
+/**
+ * Admin 续期: 给已激活的卡延长到期时间, 保留原 API key 不变.
+ * newExpiresAt 为新的到期时间戳(秒), 同时更新 SQLite 状态(已过期→已激活).
+ * 返回更新后的 Card; 找不到返回 null.
+ */
+export function extendCardExpiry(code: string, newExpiresAt: number): Card | null {
+  const card = getCardByCode(code);
+  if (!card) return null;
+  db().prepare(`
+    UPDATE cards
+    SET expires_at = ?,
+        status = CASE WHEN status = 'expired' THEN 'activated' ELSE status END
+    WHERE code = ?
+  `).run(newExpiresAt, code);
+  return getCardByCode(code);
+}
+
 export function listCards(opts: { status?: string; plan?: string; pool?: string; q?: string; limit?: number; offset?: number } = {}): Card[] {
   const { status, plan, pool, q, limit = 100, offset = 0 } = opts;
   const where: string[] = [];

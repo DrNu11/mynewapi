@@ -71,7 +71,7 @@ export const CATEGORIES: Record<Category, CategoryMeta> = {
     defaultModels: 'claude-opus-4-7,claude-sonnet-4-6,claude-opus-4-8',
     hasCodex: false,
     badgeClass: 'border-orange-500/40 bg-orange-500/10 text-orange-300',
-    defaultRPH: 60,
+    defaultRPH: 300,
     // Claude Code CLI 会自己拼 /v1/messages,这里给空串;客户复制粘贴到 ANTHROPIC_BASE_URL 直接用
     baseUrlSuffix: '',
   },
