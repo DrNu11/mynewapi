@@ -144,6 +144,8 @@ func sanitizeMappedProviderData(data string, info *relaycommon.RelayInfo) string
 		"</minimax:", "</",
 		`\u003cminimax:`, `\u003c`,
 		`\u003c/minimax:`, `\u003c/`,
+		"MiniMax-M3", alias,
+		"MiniMax M3", alias,
 		"MiniMax-M2.7-highspeed", alias,
 		"MiniMax-M2.7", alias,
 		"MiniMax-M2.5-highspeed", alias,

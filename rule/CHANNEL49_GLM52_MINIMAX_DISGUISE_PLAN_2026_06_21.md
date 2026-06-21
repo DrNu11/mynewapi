@@ -490,3 +490,94 @@ docker compose up -d new-api
 UPDATE channels SET status = 2, priority = 0, weight = 0 WHERE id = 149;
 UPDATE abilities SET enabled = 0, priority = 0, weight = 0 WHERE channel_id = 149;
 ```
+
+## 13. 2026-06-21 GLM 全家桶升级到 MiniMax-M3
+
+用户要求不只覆盖 `glm-5.2`,而是把其他 GLM 模型一起放入渠道 `149`,并统一映射到 MiniMax 官方更新的 M3。
+
+执行前只读确认:
+
+- MiniMax 上游 `/v1/models` 已返回 `MiniMax-M3`。
+- 渠道 `149` 当时只包含 `glm-5.2`。
+- 线上已有 GLM 相关公开模型包括:
+  - `glm-4.5`
+  - `glm-4.5-air`
+  - `glm-4.6`
+  - `glm-4.7`
+  - `glm-5`
+  - `glm-5-turbo`
+  - `glm-5.1`
+  - `glm-5.2`
+  - `zai-org/GLM-5-FP8`
+  - `zai-org/GLM-5.1-FP8`
+
+生产保护:
+
+- 执行前临时下线渠道 `149`。
+- 已创建备份:
+  - `channels_bak_ch149_pre_glm_family_m3_20260621151445`
+  - `abilities_bak_ch149_pre_glm_family_m3_20260621151445`
+  - `options_bak_glm_family_m3_20260621151445`
+  - `/root/codex-glm-family-m3-backup-20260621151520`
+
+代码补丁:
+
+- 在 `relay/channel/openai/helper.go` 中新增 `MiniMax-M3` / `MiniMax M3` 显式清洗。
+- 本地测试:
+  - `go test ./relay/channel/openai ./relay/common`
+
+最终线上镜像:
+
+- `nassa11111/new-api-hide-model:hide-model-v70-glm-family-m3-20260621`
+- `newapi-prod-new-api-1` healthy
+- `/api/status` HTTP 200
+
+渠道 `149` 最终配置:
+
+- status: `1`
+- priority / weight: `99 / 12`
+- models:
+  - `glm-4.5`
+  - `glm-4.5-air`
+  - `glm-4.6`
+  - `glm-4.7`
+  - `glm-5`
+  - `glm-5-turbo`
+  - `glm-5.1`
+  - `glm-5.2`
+  - `zai-org/GLM-5-FP8`
+  - `zai-org/GLM-5.1-FP8`
+- model_mapping:
+  - 全部映射到 `MiniMax-M3`
+- abilities:
+  - 10 个模型 x 6 个分组 = 60 条
+  - 全部 enabled
+
+验证结果:
+
+| 项目 | 结果 |
+|---|---|
+| `/v1/models` | 10 个 GLM 模型全部可见,无 MiniMax/M3 泄漏 |
+| `glm-4.5` chat | HTTP 200,命中 `channel_id=149`,无泄漏 |
+| `glm-5` chat | HTTP 200,命中 `channel_id=149`,无泄漏 |
+| `glm-5.1` chat | HTTP 200,命中 `channel_id=149`,无泄漏 |
+| `glm-5.2` chat | HTTP 200,命中 `channel_id=149`,无泄漏 |
+| `zai-org/GLM-5-FP8` chat | HTTP 200,命中 `channel_id=149`,无泄漏 |
+| `glm-5.2` chat stream | HTTP 200,有 `data:` 和 `[DONE]`,无泄漏 |
+| `glm-5.1` Responses | HTTP 200,完成态,无泄漏 |
+| `zai-org/GLM-5.1-FP8` Responses stream | HTTP 200,有 `response.completed`,无泄漏 |
+
+快速回滚到 v69:
+
+```bash
+cd /www/dk_project/dk_app/newapi-prod
+cp /root/codex-glm-family-m3-backup-20260621151520/docker-compose.yml.before docker-compose.yml
+docker compose up -d new-api
+```
+
+仅下线 GLM 全家桶渠道:
+
+```sql
+UPDATE channels SET status = 2, priority = 0, weight = 0 WHERE id = 149;
+UPDATE abilities SET enabled = 0, priority = 0, weight = 0 WHERE channel_id = 149;
+```
