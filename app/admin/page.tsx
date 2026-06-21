@@ -236,17 +236,41 @@ ${modelsList}
       }).join('\n\n---\n\n');
     }
 
+    // Claude 专用发货文案
+    if (category === 'claude') {
+      const modelsList = models.join('\n');
+      return codes.map((code) => {
+        return `卡密：${code}
+
+激活地址：
+https://card.nassaapi.xyz
+
+激活后会自动生成 sk- 开头的 API Key。
+
+API 请求地址 / Base URL：
+https://card.nassaapi.xyz/v1
+
+注意：
+Claude Code CLI 用户请设置环境变量：
+ANTHROPIC_BASE_URL=https://card.nassaapi.xyz
+
+支持模型：
+${modelsList}
+
+说明：每小时 ${meta.defaultRPH} 次请求。
+
+请先进入激活地址输入卡密，激活成功后复制生成的 API Key 使用即可。`;
+      }).join('\n\n---\n\n');
+    }
+
     const modelsStr = models.join(', ');
-    const claudeNote = category === 'claude'
-      ? '\n注意：Claude Code CLI 的 Base URL 不需要 /v1 后缀，直接填 https://card.nassaapi.xyz 即可。'
-      : '';
 
     const desc = isLight
       ? '套餐说明：DeepSeek 轻度月卡，30 天有效。\n近 24 小时最多 2000 点调用额度。\n近 7 天最多 10000 点调用额度。\n整张卡总共最多 40000 点调用额度。\n\n模型消耗：\ndeepseek-v4-flash 每次消耗 1 点。\ndeepseek-v4-pro 每次消耗 3 点。'
       : `说明：每小时 ${meta.defaultRPH} 次请求。`;
 
     return codes.map((code) => {
-      return `卡密：${code}\n激活地址：https://card.nassaapi.xyz\n激活后会自动生成 sk- 开头的 API Key。\nAPI 请求地址 / Base URL：${baseUrl}${claudeNote}\n支持模型：${modelsStr}\n${desc}\n请先进入激活地址输入卡密，激活成功后复制生成的 API Key 使用即可。`;
+      return `卡密：${code}\n激活地址：https://card.nassaapi.xyz\n激活后会自动生成 sk- 开头的 API Key。\nAPI 请求地址 / Base URL：${baseUrl}\n支持模型：${modelsStr}\n${desc}\n请先进入激活地址输入卡密，激活成功后复制生成的 API Key 使用即可。`;
     }).join('\n\n---\n\n');
   }
 
