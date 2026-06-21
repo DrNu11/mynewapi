@@ -44,11 +44,212 @@ func maskUpstreamModelInData(data string, info *relaycommon.RelayInfo) string {
 		info.OriginModelName != "" &&
 		info.UpstreamModelName != "" &&
 		info.UpstreamModelName != info.OriginModelName {
-		data = strings.ReplaceAll(data,
-			`"model":"`+info.UpstreamModelName+`"`,
-			`"model":"`+info.OriginModelName+`"`)
+		data = strings.ReplaceAll(data, info.UpstreamModelName, info.OriginModelName)
 	}
+	data = sanitizeMappedProviderData(data, info)
 	return maskGPTIdentityInData(data, info)
+}
+
+func sanitizeMappedProviderChatStreamData(data string, info *relaycommon.RelayInfo) string {
+	data = maskUpstreamModelInData(data, info)
+	if !isMappedMiniMaxUpstream(info) {
+		return data
+	}
+	var streamResponse dto.ChatCompletionsStreamResponse
+	if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+		return data
+	}
+	changed := false
+	for i := range streamResponse.Choices {
+		content := streamResponse.Choices[i].Delta.GetContentString()
+		if content != "" {
+			streamResponse.Choices[i].Delta.SetContentString(stripProviderThinkingFromStream(content, info))
+			changed = true
+		}
+		if streamResponse.Choices[i].Delta.ReasoningContent != nil {
+			streamResponse.Choices[i].Delta.ReasoningContent = nil
+			changed = true
+		}
+		if streamResponse.Choices[i].Delta.Reasoning != nil {
+			streamResponse.Choices[i].Delta.Reasoning = nil
+			changed = true
+		}
+	}
+	if !changed {
+		return data
+	}
+	if out, err := common.Marshal(streamResponse); err == nil {
+		return maskUpstreamModelInData(string(out), info)
+	}
+	return data
+}
+
+func sanitizeMappedProviderResponsesStreamData(data string, info *relaycommon.RelayInfo) string {
+	data = maskUpstreamModelInData(data, info)
+	if !isMappedMiniMaxUpstream(info) {
+		return data
+	}
+	var streamResponse dto.ResponsesStreamResponse
+	if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+		return data
+	}
+	changed := false
+	if streamResponse.Delta != "" {
+		streamResponse.Delta = stripProviderThinkingFromStream(streamResponse.Delta, info)
+		changed = true
+	}
+	if !changed {
+		return data
+	}
+	if out, err := common.Marshal(streamResponse); err == nil {
+		return maskUpstreamModelInData(string(out), info)
+	}
+	return data
+}
+
+func sanitizeMappedProviderTextResponse(response *dto.OpenAITextResponse, info *relaycommon.RelayInfo) {
+	if response == nil || !isMappedMiniMaxUpstream(info) {
+		return
+	}
+	response.Model = info.OriginModelName
+	for i := range response.Choices {
+		content := response.Choices[i].Message.StringContent()
+		if content != "" {
+			response.Choices[i].Message.SetStringContent(stripProviderThinkingBlocks(content))
+		}
+		response.Choices[i].Message.ReasoningContent = nil
+		response.Choices[i].Message.Reasoning = nil
+		response.Choices[i].Message.Name = nil
+	}
+}
+
+func sanitizeMappedProviderData(data string, info *relaycommon.RelayInfo) string {
+	if !isMappedMiniMaxUpstream(info) {
+		return data
+	}
+	alias := providerAliasForOrigin(info.OriginModelName)
+	replacer := strings.NewReplacer(
+		`,"name":"MiniMax AI"`, "",
+		`"name":"MiniMax AI",`, "",
+		`,"audio_content":""`, "",
+		`"audio_content":"",`, "",
+		`,"input_sensitive":false`, "",
+		`,"output_sensitive":false`, "",
+		`,"input_sensitive_type":0`, "",
+		`,"output_sensitive_type":0`, "",
+		`,"output_sensitive_int":0`, "",
+		`,"base_resp":{"status_code":0,"status_msg":"success"}`, "",
+		`,"base_resp":{"status_code":0,"status_msg":""}`, "",
+		"<minimax:", "<",
+		"</minimax:", "</",
+		`\u003cminimax:`, `\u003c`,
+		`\u003c/minimax:`, `\u003c/`,
+		"MiniMax-M2.7-highspeed", alias,
+		"MiniMax-M2.7", alias,
+		"MiniMax-M2.5-highspeed", alias,
+		"MiniMax-M2.5", alias,
+		"MiniMax-M2.1-highspeed", alias,
+		"MiniMax-M2.1", alias,
+		"MiniMax-M2", alias,
+		"MiniMax AI", alias,
+		"MiniMax", alias,
+		"Minimax", alias,
+		"MINIMAX", strings.ToUpper(alias),
+		"minimax", strings.ToLower(alias),
+		"海螺AI", alias,
+		"海螺", alias,
+		"稀宇科技", alias,
+		"Hailuo", alias,
+		"hailuo", strings.ToLower(alias),
+		"Abab", alias,
+		"abab", strings.ToLower(alias),
+	)
+	data = replacer.Replace(data)
+	return stripProviderThinkingBlocks(data)
+}
+
+func isMappedMiniMaxUpstream(info *relaycommon.RelayInfo) bool {
+	if info == nil || !info.IsModelMapped {
+		return false
+	}
+	return strings.Contains(strings.ToLower(info.UpstreamModelName), "minimax")
+}
+
+func providerAliasForOrigin(origin string) string {
+	lower := strings.ToLower(origin)
+	switch {
+	case strings.HasPrefix(lower, "glm"):
+		return "GLM"
+	case strings.HasPrefix(lower, "deepseek"):
+		return "DeepSeek"
+	case strings.HasPrefix(lower, "gpt"):
+		return "OpenAI"
+	case strings.HasPrefix(lower, "claude"):
+		return "Claude"
+	default:
+		if strings.TrimSpace(origin) != "" {
+			return origin
+		}
+		return "model"
+	}
+}
+
+func stripProviderThinkingBlocks(text string) string {
+	text = stripDelimitedCI(text, "<think>", "</think>")
+	text = stripDelimitedCI(text, `\u003cthink\u003e`, `\u003c/think\u003e`)
+	return text
+}
+
+func stripProviderThinkingFromStream(text string, info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return stripProviderThinkingBlocks(text)
+	}
+	var out strings.Builder
+	rest := text
+	for rest != "" {
+		if info.ThinkingContentInfo.DropProviderThinking {
+			end := indexFold(rest, "</think>")
+			if end < 0 {
+				return out.String()
+			}
+			rest = rest[end+len("</think>"):]
+			info.ThinkingContentInfo.DropProviderThinking = false
+			continue
+		}
+		start := indexFold(rest, "<think>")
+		if start < 0 {
+			out.WriteString(rest)
+			break
+		}
+		out.WriteString(rest[:start])
+		rest = rest[start+len("<think>"):]
+		end := indexFold(rest, "</think>")
+		if end < 0 {
+			info.ThinkingContentInfo.DropProviderThinking = true
+			break
+		}
+		rest = rest[end+len("</think>"):]
+	}
+	return out.String()
+}
+
+func stripDelimitedCI(text, startToken, endToken string) string {
+	for {
+		start := indexFold(text, startToken)
+		if start < 0 {
+			return text
+		}
+		afterStart := start + len(startToken)
+		end := indexFold(text[afterStart:], endToken)
+		if end < 0 {
+			return text
+		}
+		text = text[:start] + text[afterStart+end+len(endToken):]
+	}
+}
+
+func indexFold(s, substr string) int {
+	return strings.Index(strings.ToLower(s), strings.ToLower(substr))
 }
 
 func shouldMaskGPTIdentity(info *relaycommon.RelayInfo) bool {

@@ -27,8 +27,8 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
-	// 严格伪装：把每帧 SSE 数据里的下游模型名替换为客户端原始请求模型名
-	data = maskUpstreamModelInData(data, info)
+	// 严格伪装：把每帧 SSE 数据里的下游模型名和供应商私有字段替换为客户端原始请求模型名。
+	data = sanitizeMappedProviderChatStreamData(data, info)
 
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
@@ -247,11 +247,14 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	// 严格伪装：把响应中的下游模型名替换为客户端原始请求模型名
 	if info.IsModelMapped && info.OriginModelName != "" && info.UpstreamModelName != "" && info.UpstreamModelName != info.OriginModelName {
 		simpleResponse.Model = info.OriginModelName
-		responseBody = []byte(strings.ReplaceAll(string(responseBody),
-			`"model":"`+info.UpstreamModelName+`"`,
-			`"model":"`+info.OriginModelName+`"`))
 	}
-	responseBody = []byte(maskGPTIdentityInData(string(responseBody), info))
+	sanitizeMappedProviderTextResponse(&simpleResponse, info)
+	if isMappedMiniMaxUpstream(info) {
+		if sanitizedBody, marshalErr := common.Marshal(simpleResponse); marshalErr == nil {
+			responseBody = sanitizedBody
+		}
+	}
+	responseBody = []byte(maskUpstreamModelInData(string(responseBody), info))
 
 	for _, choice := range simpleResponse.Choices {
 		if choice.FinishReason == constant.FinishReasonContentFilter {
