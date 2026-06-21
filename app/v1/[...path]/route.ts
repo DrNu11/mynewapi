@@ -15,7 +15,9 @@ import {
   reserveCurrentHourRequest,
   updateRequestLogStatus,
   countCardWeightedPoints,
+  getEffectiveRequestQuota,
   getEffectiveRph,
+  countCardBillableRequestsSince,
 } from '@/lib/db';
 import { isCategory, legacyModels, modelsForCategory } from '@/lib/categories';
 import {
@@ -87,12 +89,12 @@ function newapiRequestId(): string {
   return `${ymd}${us}${tail}`;
 }
 
-function jsonError(status: number, message: string, type = 'new_api_error') {
+function jsonError(status: number, message: string, type = 'new_api_error', code = '') {
   const reqId = newapiRequestId();
   return new Response(
     JSON.stringify({
       error: {
-        code: '',
+        code,
         message: `${message} (request id: ${reqId})`,
         type,
       },
@@ -509,19 +511,39 @@ async function handle(req: NextRequest, pathParts: string[]) {
       ? modelsForCategory(card.category)
       : legacyModels();
     if (!allowed.includes(requestedModel)) {
+      const isGlm = card.category === 'glm';
       return jsonError(
         400,
-        `模型 "${requestedModel}" 不在本套餐可用列表内。可用模型: ${allowed.join(', ')}`,
-        'model_not_available'
+        isGlm
+          ? '该卡密不支持此模型。'
+          : `模型 "${requestedModel}" 不在本套餐可用列表内。可用模型: ${allowed.join(', ')}`,
+        isGlm ? 'model_not_allowed' : 'model_not_available',
+        isGlm ? 'model_not_allowed' : ''
       );
     }
   }
 
-  // 4.2 日卡额度保护。
+  // 4.2 GLM-5.2 日卡总请求次数额度:基础 500 次,好评后 1000 次。
+  if (card.category === 'glm' && card.plan === '1d') {
+    const effectiveRequestQuota = getEffectiveRequestQuota(card);
+    if (effectiveRequestQuota !== null && card.activated_at) {
+      const usedRequests = countCardBillableRequestsSince(card.id, card.activated_at);
+      if (usedRequests >= effectiveRequestQuota) {
+        return jsonError(
+          429,
+          '该 GLM-5.2 日卡请求次数已用完。',
+          'quota_exceeded',
+          'glm_request_quota_exceeded',
+        );
+      }
+    }
+  }
+
+  // 4.3 日卡额度保护。
   // DeepSeek:每日 $500,北京时间 00:00 重置。
   // Claude:总额度 $350,从激活起累计。
   // GPT:总额度 $250,从激活起累计。
-  if (card.plan === '1d' && card.newapi_token_id) {
+  if (card.plan === '1d' && card.category !== 'glm' && card.newapi_token_id) {
     const isDaily = card.category === 'deepseek';
     const capUsd = card.category === 'deepseek'
       ? DEEPSEEK_DAILY_CAP_USD
@@ -560,7 +582,7 @@ async function handle(req: NextRequest, pathParts: string[]) {
     }
   }
 
-  // 4.3 轻度月卡调用额度限额(仅 plan === '30d_light')
+  // 4.4 轻度月卡调用额度限额(仅 plan === '30d_light')
   // 加权计数: flash=1点, pro=3点; 24h 2000点, 7d 10000点, lifetime 40000点
   if (card.plan === '30d_light' && card.activated_at) {
     const LIGHT_24H_LIMIT = 2000;

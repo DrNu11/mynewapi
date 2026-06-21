@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/auth';
-import { getCardByCode, setCardStatus, setCardPool, setCardNewApiUserId, applyRphBonus, clearRphBonus, isRphBonusEligible } from '@/lib/db';
+import {
+  applyGlmReviewBonus,
+  applyRphBonus,
+  clearGlmReviewBonus,
+  clearRphBonus,
+  getCardByCode,
+  isGlmReviewBonusEligible,
+  isRphBonusEligible,
+  setCardNewApiUserId,
+  setCardPool,
+  setCardStatus,
+} from '@/lib/db';
 import { updateTokenStatus } from '@/lib/newapi';
 import { normalizeCode } from '@/lib/codes';
 
@@ -44,9 +55,18 @@ export async function PATCH(
   }
 
   const action = body.action;
-  if (action !== 'disable' && action !== 'enable' && action !== 'set_pool' && action !== 'set_newapi_user_id' && action !== 'apply_rph_bonus' && action !== 'clear_rph_bonus') {
+  if (
+    action !== 'disable' &&
+    action !== 'enable' &&
+    action !== 'set_pool' &&
+    action !== 'set_newapi_user_id' &&
+    action !== 'apply_rph_bonus' &&
+    action !== 'clear_rph_bonus' &&
+    action !== 'apply_glm_review_bonus' &&
+    action !== 'clear_glm_review_bonus'
+  ) {
     return NextResponse.json(
-      { success: false, message: 'action 必须是 disable / enable / set_pool / set_newapi_user_id / apply_rph_bonus / clear_rph_bonus' },
+      { success: false, message: 'action 不支持' },
       { status: 400 }
     );
   }
@@ -77,6 +97,29 @@ export async function PATCH(
   // 撤销 RPH 加成
   if (action === 'clear_rph_bonus') {
     const updated = clearRphBonus(code);
+    return NextResponse.json({ success: true, data: { card: updated } });
+  }
+
+  // GLM 好评 +500 请求次数奖励;独立于 DeepSeek RPH 加成
+  if (action === 'apply_glm_review_bonus') {
+    if (!isGlmReviewBonusEligible(card)) {
+      return NextResponse.json(
+        { success: false, message: '该卡不支持 GLM 好评请求额度奖励。', error: { message: '该卡不支持 GLM 好评请求额度奖励。', type: 'invalid_request_error', code: 'glm_bonus_not_allowed' } },
+        { status: 400 }
+      );
+    }
+    const updated = applyGlmReviewBonus(code);
+    return NextResponse.json({ success: true, data: { card: updated } });
+  }
+
+  if (action === 'clear_glm_review_bonus') {
+    const updated = clearGlmReviewBonus(code);
+    if (!updated) {
+      return NextResponse.json(
+        { success: false, message: '该卡不支持 GLM 好评请求额度奖励。', error: { message: '该卡不支持 GLM 好评请求额度奖励。', type: 'invalid_request_error', code: 'glm_bonus_not_allowed' } },
+        { status: 400 }
+      );
+    }
     return NextResponse.json({ success: true, data: { card: updated } });
   }
 

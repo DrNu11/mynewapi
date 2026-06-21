@@ -25,6 +25,11 @@ describe('classifyPublicService', () => {
     expect(classifyPublicService('deepseek-v4-pro')).toBe('deepseek');
   });
 
+  test('classifies GLM and Zhipu models', () => {
+    expect(classifyPublicService('glm-5.2')).toBe('glm');
+    expect(classifyPublicService('zhipu-chat')).toBe('glm');
+  });
+
   test('does not expose MiniMax in public status', () => {
     expect(classifyPublicService('minimax-m2.7')).toBeNull();
     expect(classifyPublicService('hailuo-2.3')).toBeNull();
@@ -128,6 +133,20 @@ describe('getPublicStatusSnapshot schema downgrade', () => {
       db.prepare('INSERT INTO request_logs (ts, status) VALUES (?, ?)').run(nowSec, 200);
     }, async (snapshot) => {
       expect(snapshot.services.every((service) => service.status === 'no_data')).toBe(true);
+      expect(snapshot.services.map((service) => service.key)).toEqual(['gpt', 'claude', 'deepseek', 'glm']);
+    });
+  });
+
+  test('GLM is included in public snapshot without exposing MiniMax', async () => {
+    await withTempStatusDb((db, nowSec) => {
+      db.exec('CREATE TABLE request_logs (id INTEGER PRIMARY KEY, ts INTEGER, model TEXT, status INTEGER)');
+      db.prepare('INSERT INTO request_logs (ts, model, status) VALUES (?, ?, ?)').run(nowSec, 'glm-5.2', 200);
+      db.prepare('INSERT INTO request_logs (ts, model, status) VALUES (?, ?, ?)').run(nowSec, 'minimax-m2.7', 500);
+    }, async (snapshot) => {
+      const glm = snapshot.services.find((service) => service.key === 'glm');
+      expect(glm?.status).toBe('healthy');
+      expect(glm?.requests24h).toBe(1);
+      expect(snapshot.services.some((service) => service.name.toLowerCase().includes('minimax'))).toBe(false);
     });
   });
 

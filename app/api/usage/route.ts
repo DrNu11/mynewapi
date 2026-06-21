@@ -18,6 +18,7 @@ import {
   getDailyCountsByModelLastNDays,
   getTopModelsLastNDays,
   getEffectiveRph,
+  getGlmRequestUsage,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -65,6 +66,7 @@ export async function POST(req: NextRequest) {
   const effectiveRph = getEffectiveRph(card);
   const remaining = effectiveRph > 0 ? Math.max(0, effectiveRph - used) : -1; // -1 = 不限
   const modelsUsed = getModelsUsedCurrentHour(sk);
+  const requestUsage = getGlmRequestUsage(card);
 
   // 扩展看板统计:总览、近 7 天趋势、7 天模型 top
   const totalStats = getTotalRequestStats(sk);
@@ -84,6 +86,14 @@ export async function POST(req: NextRequest) {
       rph_base: card.rph || 0,
       rph_bonus: card.rph_bonus || 0,
       remaining,
+      category: card.category,
+      plan: card.plan,
+      requestQuota: requestUsage.requestQuota,
+      requestBonusQuota: requestUsage.requestBonusQuota,
+      effectiveRequestQuota: requestUsage.effectiveRequestQuota,
+      usedRequests: requestUsage.usedRequests,
+      remainingRequests: requestUsage.remainingRequests,
+      bonusReason: card.request_bonus_reason,
       window_sec: 3600,
       hour_start: hourStart, // 当前整点窗口起始 unix 秒
       next_reset_at: nextResetAt, // 下一次重置 unix 秒(前端做倒计时)

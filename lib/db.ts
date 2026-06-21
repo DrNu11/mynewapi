@@ -29,6 +29,10 @@ function init(inst: Database.Database) {
       plan_days INTEGER NOT NULL,
       category TEXT,
       rph INTEGER NOT NULL DEFAULT 0,
+      request_quota INTEGER DEFAULT NULL,
+      request_bonus_quota INTEGER NOT NULL DEFAULT 0,
+      request_bonus_reason TEXT,
+      request_bonus_at INTEGER,
       pool TEXT,
       status TEXT NOT NULL DEFAULT 'unused',
       created_at INTEGER NOT NULL,
@@ -107,6 +111,29 @@ function init(inst: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_video_tasks_task_id ON video_tasks(task_id);
     CREATE INDEX IF NOT EXISTS idx_video_tasks_card_id ON video_tasks(card_id);
     CREATE INDEX IF NOT EXISTS idx_video_tasks_sk_key ON video_tasks(sk_key);
+
+    CREATE TABLE IF NOT EXISTS ppt_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT UNIQUE NOT NULL,
+      card_id INTEGER NOT NULL,
+      sk_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      scenario TEXT NOT NULL,
+      style TEXT NOT NULL,
+      slide_count INTEGER NOT NULL,
+      template_id TEXT NOT NULL,
+      input_text TEXT NOT NULL,
+      status TEXT NOT NULL,
+      pptx_path TEXT,
+      error_message TEXT,
+      quota_charged INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (card_id) REFERENCES cards(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ppt_tasks_task_id ON ppt_tasks(task_id);
+    CREATE INDEX IF NOT EXISTS idx_ppt_tasks_card_id ON ppt_tasks(card_id);
+    CREATE INDEX IF NOT EXISTS idx_ppt_tasks_sk_key ON ppt_tasks(sk_key);
   `);
   // Migration: 给老库补缺失列
   const cols = inst.prepare('PRAGMA table_info(cards)').all() as Array<{ name: string }>;
@@ -127,6 +154,18 @@ function init(inst: Database.Database) {
   }
   if (!cols.some((c) => c.name === 'rph_bonus_at')) {
     inst.exec('ALTER TABLE cards ADD COLUMN rph_bonus_at INTEGER');
+  }
+  if (!cols.some((c) => c.name === 'request_quota')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN request_quota INTEGER DEFAULT NULL');
+  }
+  if (!cols.some((c) => c.name === 'request_bonus_quota')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN request_bonus_quota INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!cols.some((c) => c.name === 'request_bonus_reason')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN request_bonus_reason TEXT');
+  }
+  if (!cols.some((c) => c.name === 'request_bonus_at')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN request_bonus_at INTEGER');
   }
   if (!cols.some((c) => c.name === 'pool')) {
     inst.exec('ALTER TABLE cards ADD COLUMN pool TEXT');
@@ -151,6 +190,10 @@ function init(inst: Database.Database) {
   // video_bonus_quota: 邀请奖励获得的额外视频次数
   if (!cols.some((c) => c.name === 'video_bonus_quota')) {
     inst.exec('ALTER TABLE cards ADD COLUMN video_bonus_quota INTEGER NOT NULL DEFAULT 0');
+  }
+  // ppt_quota: 单卡 PPT 生成次数(NULL = 不限)
+  if (!cols.some((c) => c.name === 'ppt_quota')) {
+    inst.exec('ALTER TABLE cards ADD COLUMN ppt_quota INTEGER DEFAULT NULL');
   }
   // video_tasks 增量迁移
   const vtCols = inst.prepare('PRAGMA table_info(video_tasks)').all() as Array<{ name: string }>;
@@ -332,6 +375,12 @@ export interface Card {
   rph_bonus: number;
   rph_bonus_reason: string | null;
   rph_bonus_at: number | null;
+  /** 总请求次数基础额度;NULL = 不启用总请求次数限制 */
+  request_quota: number | null;
+  /** 请求次数奖励额度(GLM 好评 +500 等),不影响 RPH */
+  request_bonus_quota: number;
+  request_bonus_reason: string | null;
+  request_bonus_at: number | null;
   /** 视频生成基础体验次数(默认 1, 0 = 不限) */
   video_quota: number;
   /** 邀请奖励获得的额外视频次数 */
@@ -350,6 +399,8 @@ export interface Card {
   activator_ip: string | null;
   disable_reason: string | null;
   notes: string | null;
+  /** PPT 生成次数(NULL = 不限) */
+  ppt_quota: number | null;
 }
 
 export interface VideoTask {
@@ -372,6 +423,25 @@ export interface VideoTask {
   last_query_error: string | null;
   query_error_count: number;
   last_queried_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface PptTask {
+  id: number;
+  task_id: string;
+  card_id: number;
+  sk_key: string;
+  title: string;
+  scenario: string;
+  style: string;
+  slide_count: number;
+  template_id: string;
+  input_text: string;
+  status: string;
+  pptx_path: string | null;
+  error_message: string | null;
+  quota_charged: number;
   created_at: number;
   updated_at: number;
 }
@@ -430,12 +500,28 @@ export function releaseCardClaim(code: string): void {
   ).run(code);
 }
 
-export function insertCard(row: Omit<Card, 'id'>): number {
+type InsertCardRow = Omit<
+  Card,
+  'id' | 'request_quota' | 'request_bonus_quota' | 'request_bonus_reason' | 'request_bonus_at' | 'ppt_quota'
+> &
+  Partial<Pick<Card, 'request_quota' | 'request_bonus_quota' | 'request_bonus_reason' | 'request_bonus_at' | 'ppt_quota'>>;
+
+export function insertCard(row: InsertCardRow): number {
   const stmt = db().prepare(`
-    INSERT INTO cards (code, plan, plan_days, category, rph, video_quota, video_bonus_quota, pool, status, created_at, activated_at, expires_at, newapi_user_id, newapi_token_id, newapi_token_key, activator_ip, disable_reason, notes)
-    VALUES (@code, @plan, @plan_days, @category, @rph, @video_quota, @video_bonus_quota, @pool, @status, @created_at, @activated_at, @expires_at, @newapi_user_id, @newapi_token_id, @newapi_token_key, @activator_ip, @disable_reason, @notes)
+    INSERT INTO cards (code, plan, plan_days, category, rph, rph_bonus, rph_bonus_reason, rph_bonus_at, request_quota, request_bonus_quota, request_bonus_reason, request_bonus_at, video_quota, video_bonus_quota, ppt_quota, pool, status, created_at, activated_at, expires_at, newapi_user_id, newapi_token_id, newapi_token_key, activator_ip, disable_reason, notes)
+    VALUES (@code, @plan, @plan_days, @category, @rph, @rph_bonus, @rph_bonus_reason, @rph_bonus_at, @request_quota, @request_bonus_quota, @request_bonus_reason, @request_bonus_at, @video_quota, @video_bonus_quota, @ppt_quota, @pool, @status, @created_at, @activated_at, @expires_at, @newapi_user_id, @newapi_token_id, @newapi_token_key, @activator_ip, @disable_reason, @notes)
   `);
-  const info = stmt.run(row);
+  const info = stmt.run({
+    ...row,
+    rph_bonus: row.rph_bonus ?? 0,
+    rph_bonus_reason: row.rph_bonus_reason ?? null,
+    rph_bonus_at: row.rph_bonus_at ?? null,
+    request_quota: row.request_quota ?? null,
+    request_bonus_quota: row.request_bonus_quota ?? 0,
+    request_bonus_reason: row.request_bonus_reason ?? null,
+    request_bonus_at: row.request_bonus_at ?? null,
+    ppt_quota: row.ppt_quota ?? null,
+  });
   return info.lastInsertRowid as number;
 }
 
@@ -525,6 +611,60 @@ export function updateVideoTask(
      WHERE task_id = @task_id`
   ).run(next);
   return getVideoTaskByTaskId(taskId);
+}
+
+export function insertPptTask(row: Omit<PptTask, 'id' | 'created_at' | 'updated_at'>): PptTask {
+  const now = Math.floor(Date.now() / 1000);
+  db().prepare(
+    `INSERT INTO ppt_tasks (
+      task_id, card_id, sk_key, title, scenario, style, slide_count, template_id,
+      input_text, status, pptx_path, error_message, quota_charged, created_at, updated_at
+    ) VALUES (
+      @task_id, @card_id, @sk_key, @title, @scenario, @style, @slide_count, @template_id,
+      @input_text, @status, @pptx_path, @error_message, @quota_charged, @created_at, @updated_at
+    )`
+  ).run({ ...row, created_at: now, updated_at: now });
+  return getPptTaskByTaskId(row.task_id) as PptTask;
+}
+
+export function getPptTaskByTaskId(taskId: string): PptTask | null {
+  return (
+    (db().prepare('SELECT * FROM ppt_tasks WHERE task_id = ?').get(taskId) as PptTask) || null
+  );
+}
+
+export function updatePptTask(
+  taskId: string,
+  patch: Partial<Pick<PptTask, 'status' | 'pptx_path' | 'error_message' | 'quota_charged'>>
+): PptTask | null {
+  const task = getPptTaskByTaskId(taskId);
+  if (!task) return null;
+  const next = {
+    status: patch.status ?? task.status,
+    pptx_path: 'pptx_path' in patch ? (patch.pptx_path ?? null) : task.pptx_path,
+    error_message: 'error_message' in patch ? (patch.error_message ?? null) : task.error_message,
+    quota_charged: patch.quota_charged ?? task.quota_charged,
+    updated_at: Math.floor(Date.now() / 1000),
+    task_id: taskId,
+  };
+  db().prepare(
+    `UPDATE ppt_tasks
+     SET status = @status,
+         pptx_path = @pptx_path,
+         error_message = @error_message,
+         quota_charged = @quota_charged,
+         updated_at = @updated_at
+     WHERE task_id = @task_id`
+  ).run(next);
+  return getPptTaskByTaskId(taskId);
+}
+
+/** 查询某卡密已消耗的 PPT 生成次数 */
+export function getPptQuotaUsed(cardId: number): number {
+  const row = db()
+    .prepare('SELECT COUNT(*) as c FROM ppt_tasks WHERE card_id = ? AND quota_charged = 1')
+    .get(cardId) as { c: number };
+  return row?.c || 0;
 }
 
 /** 北京时区(UTC+8)当天 0 点 unix 秒时间戳 */
@@ -1044,6 +1184,95 @@ export function countCardWeightedPoints(cardId: number, sinceSec: number): numbe
   return row.total ?? 0;
 }
 
+export const GLM_BASE_REQUEST_QUOTA = 500;
+export const GLM_REVIEW_BONUS_REQUEST_QUOTA = 500;
+
+export function isGlmRequestQuotaCard(card: { category: string | null; plan: string }): boolean {
+  return card.category === 'glm' && card.plan === '1d';
+}
+
+export function getBaseRequestQuota(card: {
+  category: string | null;
+  plan: string;
+  request_quota?: number | null;
+}): number | null {
+  if (isGlmRequestQuotaCard(card)) {
+    return Number(card.request_quota ?? GLM_BASE_REQUEST_QUOTA);
+  }
+  return card.request_quota === null || card.request_quota === undefined
+    ? null
+    : Math.max(0, Number(card.request_quota));
+}
+
+export function getEffectiveRequestQuota(card: {
+  category: string | null;
+  plan: string;
+  request_quota?: number | null;
+  request_bonus_quota?: number | null;
+}): number | null {
+  const base = getBaseRequestQuota(card);
+  if (base === null) return null;
+  return base + Math.max(0, Number(card.request_bonus_quota || 0));
+}
+
+export function isGlmReviewBonusEligible(card: {
+  category: string | null;
+  plan: string;
+  status: string;
+}): boolean {
+  return isGlmRequestQuotaCard(card)
+    && card.status !== 'expired'
+    && card.status !== 'disabled';
+}
+
+/** 统计某卡从 sinceSec 起的成功请求次数;GLM 总请求额度使用这个口径。 */
+export function countCardBillableRequestsSince(cardId: number, sinceSec: number): number {
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) as c
+       FROM request_logs
+       WHERE card_id = ?
+         AND ts >= ?
+         AND status >= 200
+         AND status < 400`
+    )
+    .get(cardId, sinceSec) as { c: number };
+  return row.c || 0;
+}
+
+export function getGlmRequestUsage(card: {
+  id: number;
+  category: string | null;
+  plan: string;
+  activated_at: number | null;
+  request_quota?: number | null;
+  request_bonus_quota?: number | null;
+}): {
+  requestQuota: number | null;
+  requestBonusQuota: number;
+  effectiveRequestQuota: number | null;
+  usedRequests: number;
+  remainingRequests: number | null;
+} {
+  const requestQuota = getBaseRequestQuota(card);
+  const requestBonusQuota = Math.max(0, Number(card.request_bonus_quota || 0));
+  const effectiveRequestQuota = getEffectiveRequestQuota(card);
+  const usedRequests =
+    isGlmRequestQuotaCard(card) && card.activated_at
+      ? countCardBillableRequestsSince(card.id, card.activated_at)
+      : 0;
+  return {
+    requestQuota,
+    requestBonusQuota,
+    effectiveRequestQuota,
+    usedRequests,
+    remainingRequests:
+      effectiveRequestQuota === null
+        ? null
+        : Math.max(0, effectiveRequestQuota - usedRequests),
+  };
+}
+
 /** RPH 加成适用判断(仅用于 RPH 计算)：策略函数，当前仅 deepseek 1d/7d/30d 允许 */
 export function canUseRphBonus(card: { category: string | null; plan: string }): boolean {
   return card.category === 'deepseek'
@@ -1100,6 +1329,38 @@ export function clearRphBonus(code: string): Card | null {
       'UPDATE cards SET rph_bonus = 0, rph_bonus_reason = NULL, rph_bonus_at = NULL WHERE code = ?'
     ).run(code);
   }
+  return getCardByCode(code);
+}
+
+/** GLM 好评 +500 请求次数奖励;不写 rph_bonus,不影响 DeepSeek。 */
+export function applyGlmReviewBonus(code: string): Card | null {
+  const now = Math.floor(Date.now() / 1000);
+  const card = getCardByCode(code);
+  if (!card) return null;
+  if (!isGlmReviewBonusEligible(card)) return null;
+
+  db().prepare(
+    `UPDATE cards
+     SET request_bonus_quota = ?,
+         request_bonus_reason = ?,
+         request_bonus_at = ?
+     WHERE code = ?`
+  ).run(GLM_REVIEW_BONUS_REQUEST_QUOTA, 'good_review', now, code);
+  return getCardByCode(code);
+}
+
+export function clearGlmReviewBonus(code: string): Card | null {
+  const card = getCardByCode(code);
+  if (!card) return null;
+  if (!isGlmRequestQuotaCard(card)) return null;
+
+  db().prepare(
+    `UPDATE cards
+     SET request_bonus_quota = 0,
+         request_bonus_reason = NULL,
+         request_bonus_at = NULL
+     WHERE code = ?`
+  ).run(code);
   return getCardByCode(code);
 }
 

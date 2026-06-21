@@ -11,10 +11,16 @@ interface ResultData {
   base_url: string;
   plan: string;
   plan_days: number;
-  category: 'deepseek' | 'gpt' | 'claude' | null;
+  category: 'deepseek' | 'gpt' | 'claude' | 'glm' | null;
   category_label: string | null;
   has_codex: boolean;
   rph: number;
+  request_quota?: number | null;
+  request_bonus_quota?: number;
+  effective_request_quota?: number | null;
+  used_requests?: number;
+  remaining_requests?: number | null;
+  request_bonus_reason?: string | null;
   activated_at: number;
   /** null = 永不过期(尊享套餐,只受额度约束) */
   expires_at: number | null;
@@ -54,7 +60,7 @@ function buildCodexCommand(os: Os, sk: string, origin: string): string {
  *   - claude   → app=claude(走 Anthropic Messages /v1/messages 协议,适配 Claude Code CLI)
  */
 function buildCcswitchDeeplink(
-  category: 'deepseek' | 'gpt' | 'claude' | null,
+  category: 'deepseek' | 'gpt' | 'claude' | 'glm' | null,
   sk: string
 ): string | null {
   let app: string;
@@ -80,6 +86,7 @@ function buildCcswitchDeeplink(
     name = 'NassaAPI-Claude';
   } else {
     // 老 NASSA- 卡密(category=null),不显示一键导入
+    // GLM 第一版暂不宣传 Codex/Responses/CC Switch 一键导入,只展示 OpenAI 兼容 /v1 用法
     return null;
   }
 
@@ -97,7 +104,7 @@ function buildCcswitchDeeplink(
 }
 
 /** CC Switch 一键导入按钮显示文案(按套餐 category) */
-function ccswitchBadgeText(category: 'deepseek' | 'gpt' | 'claude' | null): {
+function ccswitchBadgeText(category: 'deepseek' | 'gpt' | 'claude' | 'glm' | null): {
   title: string;
   desc: string;
 } {
@@ -142,6 +149,12 @@ interface UsageState {
   used: number;
   rph: number;
   rph_bonus: number;
+  requestQuota?: number | null;
+  requestBonusQuota?: number;
+  effectiveRequestQuota?: number | null;
+  usedRequests?: number;
+  remainingRequests?: number | null;
+  bonusReason?: string | null;
   remaining: number;
   loading: boolean;
   fetchedAt: number; // unix sec
@@ -237,6 +250,12 @@ export default function ResultPage() {
           rph: j.data.rph,
           rph_bonus: j.data.rph_bonus || 0,
           remaining: j.data.remaining,
+          requestQuota: j.data.requestQuota,
+          requestBonusQuota: j.data.requestBonusQuota || 0,
+          effectiveRequestQuota: j.data.effectiveRequestQuota,
+          usedRequests: j.data.usedRequests || 0,
+          remainingRequests: j.data.remainingRequests,
+          bonusReason: j.data.bonusReason ?? null,
           nextResetAt: j.data.next_reset_at,
           modelsUsed: j.data.models_used || [],
           totalRequests: j.data.total_requests,
@@ -277,6 +296,12 @@ export default function ResultPage() {
           rph: j.data.rph,
           rph_bonus: j.data.rph_bonus || 0,
           remaining: j.data.remaining,
+          requestQuota: j.data.requestQuota,
+          requestBonusQuota: j.data.requestBonusQuota || 0,
+          effectiveRequestQuota: j.data.effectiveRequestQuota,
+          usedRequests: j.data.usedRequests || 0,
+          remainingRequests: j.data.remainingRequests,
+          bonusReason: j.data.bonusReason ?? null,
           nextResetAt: j.data.next_reset_at,
           modelsUsed: j.data.models_used || [],
           totalRequests: j.data.total_requests,
@@ -354,6 +379,18 @@ export default function ResultPage() {
 
   // expires_at 为 null = 尊享套餐(永不过期,只受额度约束)
   const noExpire = data.expires_at === null;
+  const isGlmDayCard = data.category === 'glm' && data.plan === '1d';
+  const glmRequestQuota = usage?.requestQuota ?? data.request_quota ?? (isGlmDayCard ? 500 : null);
+  const glmBonusQuota = usage?.requestBonusQuota ?? data.request_bonus_quota ?? 0;
+  const glmEffectiveQuota =
+    usage?.effectiveRequestQuota ?? data.effective_request_quota ?? (
+      glmRequestQuota === null ? null : glmRequestQuota + glmBonusQuota
+    );
+  const glmUsedRequests = usage?.usedRequests ?? data.used_requests ?? 0;
+  const glmRemainingRequests =
+    usage?.remainingRequests ?? data.remaining_requests ?? (
+      glmEffectiveQuota === null ? null : Math.max(0, glmEffectiveQuota - glmUsedRequests)
+    );
   const expiresDate = noExpire ? null : new Date(data.expires_at! * 1000);
   const remainHours = noExpire
     ? Infinity
@@ -381,10 +418,14 @@ export default function ResultPage() {
         </div>
 
         <h1 className="mt-4 text-3xl font-bold text-slate-100">
-          {data.category_label ? `${data.category_label} · ` : ''}{formatDaysCN(data.plan_days)}畅用已开通
+          {isGlmDayCard
+            ? 'GLM-5.2 日卡已开通'
+            : `${data.category_label ? `${data.category_label} · ` : ''}${formatDaysCN(data.plan_days)}畅用已开通`}
         </h1>
         <p className="mt-2 text-sm text-slate-400">
-          请妥善保存以下信息,粘贴到 Cherry Studio / Claude Code / Cursor 等工具即可使用
+          {isGlmDayCard
+            ? '支持 GLM-5.2 模型，适合智能体、代码生成、长文本处理和日常 AI 对话。'
+            : '请妥善保存以下信息,粘贴到 Cherry Studio / Claude Code / Cursor 等工具即可使用'}
         </p>
 
         <a
@@ -460,6 +501,16 @@ export default function ResultPage() {
                 <span className="font-semibold text-orange-100">Claude Code 客户端 · 不要加 /v1</span>
                 <div className="mt-0.5 text-xs text-orange-200/80">
                   Claude Code 会自动拼 <code className="rounded bg-slate-900 px-1 font-mono text-[11px]">/v1/messages</code>;手动加 /v1 反而会变成 <code className="rounded bg-slate-900 px-1 font-mono text-[11px]">/v1/v1/messages</code> 报 404
+                </div>
+              </div>
+            </div>
+          ) : data.category === 'glm' ? (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-emerald-200">
+              <span className="text-base leading-none">🟢</span>
+              <div className="text-sm leading-snug">
+                <span className="font-semibold text-emerald-100">OpenAI 兼容客户端 · URL 必须带 /v1</span>
+                <div className="mt-0.5 text-xs text-emerald-200/80">
+                  Cherry Studio / Cursor / NextChat 等客户端会拼 <code className="rounded bg-slate-900 px-1 font-mono text-[11px]">/chat/completions</code>;少了 /v1 会 404。
                 </div>
               </div>
             </div>
@@ -566,8 +617,91 @@ export default function ResultPage() {
           );
         })()}
 
-        {/* 速率限制 + 实时用量(轻度月卡不显示每小时限制) */}
-        {data.rph > 0 && data.plan !== '30d_light' && (
+        {/* GLM-5.2 日卡总请求额度 */}
+        {isGlmDayCard && (
+          <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-sm font-medium text-emerald-200">
+                <Zap className="h-4 w-4" />
+                GLM-5.2 请求额度
+              </div>
+              <div className="flex items-center gap-2">
+                {usage && !usage.loading && (
+                  <span className="text-[10px] text-slate-500">
+                    {nowSec - usage.fetchedAt < 5
+                      ? '刚刚更新'
+                      : `${Math.max(0, nowSec - usage.fetchedAt)} 秒前`}
+                  </span>
+                )}
+                <button
+                  onClick={refreshUsage}
+                  disabled={usage?.loading}
+                  className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-50"
+                  title="手动刷新"
+                >
+                  <RefreshCw className={`h-3 w-3 ${usage?.loading ? 'animate-spin' : ''}`} />
+                  刷新
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-emerald-500/20 bg-slate-950/40 px-4 py-3">
+                <div className="text-xs text-emerald-200/70">24 小时有效</div>
+                <div className="mt-1 font-mono text-lg font-bold text-emerald-100">
+                  基础 {glmRequestQuota ?? 500} 次
+                </div>
+              </div>
+              <div className="rounded-lg border border-emerald-500/20 bg-slate-950/40 px-4 py-3">
+                <div className="text-xs text-emerald-200/70">
+                  {glmBonusQuota > 0 ? '已获得好评奖励' : '好评后可提升'}
+                </div>
+                <div className="mt-1 font-mono text-lg font-bold text-emerald-100">
+                  {glmBonusQuota > 0 ? `+${glmBonusQuota} 次` : '至 1000 次'}
+                </div>
+              </div>
+              <div className="rounded-lg border border-emerald-500/20 bg-slate-950/40 px-4 py-3">
+                <div className="text-xs text-emerald-200/70">当前总额度</div>
+                <div className="mt-1 font-mono text-lg font-bold text-emerald-100">
+                  {glmEffectiveQuota ?? 500} 次
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-end justify-between gap-3">
+              <div className="font-mono">
+                <span className="text-4xl font-bold leading-none text-emerald-100">
+                  {glmUsedRequests}
+                </span>
+                <span className="ml-2 text-lg text-slate-500">
+                  / {glmEffectiveQuota ?? 500}
+                </span>
+              </div>
+              <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 font-mono text-xs text-emerald-200">
+                剩余 {glmRemainingRequests ?? Math.max(0, (glmEffectiveQuota ?? 500) - glmUsedRequests)} 次
+              </div>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
+              <div
+                className={`h-full transition-all duration-500 ${glmEffectiveQuota && glmUsedRequests >= glmEffectiveQuota
+                  ? 'bg-red-500'
+                  : glmEffectiveQuota && glmUsedRequests >= glmEffectiveQuota * 0.8
+                    ? 'bg-amber-500'
+                    : 'bg-emerald-500'
+                  }`}
+                style={{
+                  width: `${Math.min(100, ((glmUsedRequests || 0) / (glmEffectiveQuota || 500)) * 100)}%`,
+                }}
+              />
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-emerald-200/75">
+              本套餐不是无限量套餐。达到请求次数上限或超过有效期后，将无法继续请求。
+            </p>
+          </div>
+        )}
+
+        {/* 速率限制 + 实时用量(轻度月卡/GLM 总请求额度卡不显示每小时限制) */}
+        {data.rph > 0 && data.plan !== '30d_light' && !isGlmDayCard && (
           <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/5 p-5">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-sm font-medium text-blue-200">
@@ -776,7 +910,11 @@ export default function ResultPage() {
                   {data.category_label ?? '—'}
                 </div>
                 <div className="mt-0.5 text-[10px] text-slate-500">
-                  {data.plan === '30d_light' ? 'flash 1点/次 · pro 3点/次' : `每小时上限 ${data.rph || '不限'}`}
+                  {isGlmDayCard
+                    ? `基础 ${glmRequestQuota ?? 500} 次 · 好评 +500 次`
+                    : data.plan === '30d_light'
+                      ? 'flash 1点/次 · pro 3点/次'
+                      : `每小时上限 ${data.rph || '不限'}`}
                 </div>
               </div>
             </div>
@@ -1120,7 +1258,7 @@ claude`}
         </details>
 
         {/* ============== 一键续费 panel — 仅有期限的卡显示 ============== */}
-        {!noExpire && data.category && (
+        {!noExpire && data.category && !isGlmDayCard && (
           <div className="mt-8 rounded-2xl border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-amber-500/10 p-6 shadow-xl shadow-amber-500/5">
             <div className="flex items-start gap-3">
               <div className="rounded-xl bg-amber-500/20 p-2.5">
@@ -1180,7 +1318,7 @@ claude`}
                   type="text"
                   value={renewCode}
                   onChange={(e) => setRenewCode(e.target.value.toUpperCase())}
-                  placeholder={`${data.category === 'deepseek' ? 'DE' : data.category === 'gpt' ? 'GP' : 'CL'}-XXXX-XXXX-XXXX`}
+                  placeholder={`${data.category === 'deepseek' ? 'DE' : data.category === 'gpt' ? 'GP' : data.category === 'glm' ? 'GL' : 'CL'}-XXXX-XXXX-XXXX`}
                   className="mt-2 w-full rounded-lg border border-slate-600 bg-slate-950 px-4 py-3 font-mono tracking-wider text-slate-100 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
                   autoComplete="off"
                   spellCheck={false}

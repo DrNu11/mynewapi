@@ -9,7 +9,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
-type PublicServiceKey = 'gpt' | 'claude' | 'deepseek';
+type PublicServiceKey = 'gpt' | 'claude' | 'deepseek' | 'glm';
 type PublicServiceStatus = 'healthy' | 'degraded' | 'outage' | 'no_data';
 
 interface PublicStatusBucket {
@@ -84,7 +84,7 @@ const STATUS_STYLES: Record<
   },
 };
 
-const SERVICE_ORDER: PublicServiceKey[] = ['deepseek', 'gpt', 'claude'];
+const SERVICE_ORDER: PublicServiceKey[] = ['deepseek', 'gpt', 'claude', 'glm'];
 const UPTIME_COLUMNS_PER_DAY = 24;
 const UPTIME_SLOT_MS = 60 * 60 * 1000;
 const UPTIME_COLORS: Record<PublicServiceStatus, string> = {

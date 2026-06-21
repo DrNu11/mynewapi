@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCardByTokenKey } from '@/lib/db';
+import { getCardByTokenKey, getGlmRequestUsage } from '@/lib/db';
 import { isCategory, modelsForCategory, legacyModels, CATEGORIES } from '@/lib/categories';
 
 export const runtime = 'nodejs';
@@ -24,9 +24,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: '此 API Key 已过期' }, { status: 403 });
     }
 
-    const category = card.category as 'deepseek' | 'gpt' | 'claude' | null;
+    const category = isCategory(card.category) ? card.category : null;
     const category_label = category ? CATEGORIES[category].label : '经典套餐';
     const models = category ? modelsForCategory(category) : legacyModels();
+    const requestUsage = getGlmRequestUsage(card);
 
     // 自动适配 Base URL: 必须与前端展示保持一致，指向代理服务的 /v1 路径
     const base_url = `${req.nextUrl.origin}${category && CATEGORIES[category].baseUrlSuffix === '' ? '' : '/v1'}`;
@@ -42,6 +43,12 @@ export async function POST(req: NextRequest) {
         category_label,
         has_codex: category === 'gpt',
         rph: card.rph,
+        request_quota: requestUsage.requestQuota,
+        request_bonus_quota: requestUsage.requestBonusQuota,
+        effective_request_quota: requestUsage.effectiveRequestQuota,
+        used_requests: requestUsage.usedRequests,
+        remaining_requests: requestUsage.remainingRequests,
+        request_bonus_reason: card.request_bonus_reason,
         activated_at: card.activated_at,
         expires_at: card.expires_at,
         models,

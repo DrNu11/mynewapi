@@ -5,6 +5,7 @@ import {
   claimCard,
   releaseCardClaim,
   activateCard,
+  getGlmRequestUsage,
   markExpiredCards,
 } from '@/lib/db';
 import { isValidCodeFormat, normalizeCode } from '@/lib/codes';
@@ -88,6 +89,7 @@ export async function POST(req: NextRequest) {
   // 已激活: 直接返回已绑定的 key (允许客户重新查看)
   // 注意:noExpire 套餐 expires_at=NULL,不能作为守护条件,只看 status+token_key
   if (card.status === 'activated' && card.newapi_token_key) {
+    const requestUsage = getGlmRequestUsage(card);
     return NextResponse.json({
       success: true,
       already_activated: true,
@@ -100,6 +102,12 @@ export async function POST(req: NextRequest) {
         category_label: categoryMeta?.label ?? null,
         has_codex: categoryMeta?.hasCodex ?? false,
         rph: card.rph,
+        request_quota: requestUsage.requestQuota,
+        request_bonus_quota: requestUsage.requestBonusQuota,
+        effective_request_quota: requestUsage.effectiveRequestQuota,
+        used_requests: requestUsage.usedRequests,
+        remaining_requests: requestUsage.remainingRequests,
+        request_bonus_reason: card.request_bonus_reason,
         activated_at: card.activated_at,
         expires_at: card.expires_at,
         models,
@@ -179,6 +187,10 @@ export async function POST(req: NextRequest) {
   // activating → activated;noExpire 套餐 expires_at 写 NULL,markExpiredCards 跳过
   const cardExpiresAt = planNoExpire ? null : tokenInfo.expiredAt;
   activateCard(code, tokenInfo.id, tokenInfo.key, cardExpiresAt);
+  const requestUsage = getGlmRequestUsage({
+    ...card,
+    activated_at: Math.floor(Date.now() / 1000),
+  });
 
   return NextResponse.json({
     success: true,
@@ -192,6 +204,12 @@ export async function POST(req: NextRequest) {
       category_label: categoryMeta?.label ?? null,
       has_codex: categoryMeta?.hasCodex ?? false,
       rph: card.rph,
+      request_quota: requestUsage.requestQuota,
+      request_bonus_quota: requestUsage.requestBonusQuota,
+      effective_request_quota: requestUsage.effectiveRequestQuota,
+      used_requests: requestUsage.usedRequests,
+      remaining_requests: requestUsage.remainingRequests,
+      request_bonus_reason: card.request_bonus_reason,
       activated_at: Math.floor(Date.now() / 1000),
       expires_at: cardExpiresAt,
       models,
