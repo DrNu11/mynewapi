@@ -1,15 +1,15 @@
 /**
- * 卡密分类:DeepSeek / GPT / Claude 套餐。
+ * 卡密分类:DeepSeek / GPT / Claude / GLM 套餐。
  * 一张卡密只能用对应分类的模型,这样老板可以分别定价。
  * 加新类只改这一个文件:补一个 prefix + 模型清单 + 颜色,UI/校验自动跟随。
  */
 
-export type Category = 'deepseek' | 'gpt' | 'claude';
+export type Category = 'deepseek' | 'gpt' | 'claude' | 'glm';
 
 export interface CategoryMeta {
   id: Category;
   /** 卡密前缀,2 个大写字母,需要全局唯一,且不能跟历史 NASSA 冲突 */
-  prefix: 'DE' | 'GP' | 'CL';
+  prefix: 'DE' | 'GP' | 'CL' | 'GL';
   label: string;
   shortLabel: string;
   description: string;
@@ -75,12 +75,26 @@ export const CATEGORIES: Record<Category, CategoryMeta> = {
     // Claude Code CLI 会自己拼 /v1/messages,这里给空串;客户复制粘贴到 ANTHROPIC_BASE_URL 直接用
     baseUrlSuffix: '',
   },
+  glm: {
+    id: 'glm',
+    prefix: 'GL',
+    label: 'GLM-5.2 日卡',
+    shortLabel: 'GLM',
+    description: 'GLM-5.2 日卡,24 小时有效,基础 500 次请求',
+    modelsEnv: 'MODELS_GLM',
+    defaultModels: 'glm-5.2',
+    hasCodex: false,
+    badgeClass: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
+    defaultRPH: 500,
+    baseUrlSuffix: '/v1',
+  },
 };
 
 export const CATEGORY_LIST: CategoryMeta[] = [
   CATEGORIES.deepseek,
   CATEGORIES.gpt,
   CATEGORIES.claude,
+  CATEGORIES.glm,
 ];
 
 /**
@@ -104,7 +118,7 @@ export function displayModelName(requestedModel: string): string {
 }
 
 export function isCategory(v: unknown): v is Category {
-  return v === 'deepseek' || v === 'gpt' || v === 'claude';
+  return v === 'deepseek' || v === 'gpt' || v === 'claude' || v === 'glm';
 }
 
 /** 从卡密前缀推断 category;NASSA-* 老卡密返回 null */
@@ -125,7 +139,7 @@ export function modelsForCategory(c: Category): string[] {
     .filter(Boolean);
 }
 
-/** 老 NASSA 卡密兼容:用 ALLOWED_MODELS,否则合并所有 category 的模型 */
+/** 老 NASSA 卡密兼容:用 ALLOWED_MODELS,否则沿用历史 DeepSeek + GPT 模型集合 */
 export function legacyModels(): string[] {
   const raw = process.env.ALLOWED_MODELS;
   if (raw && raw.trim()) {

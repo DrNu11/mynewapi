@@ -112,6 +112,9 @@ export async function POST(req: NextRequest) {
   if (!isCategory(orig.category)) {
     return fail('老 NASSA-* 卡密暂不支持续费,请联系客服重新发卡', 400);
   }
+  if (orig.category === 'glm') {
+    return fail('GLM-5.2 日卡暂不支持一键续费,请激活新的 GLM 卡密使用', 400);
+  }
 
   // ===================== 校验续费卡 =====================
   const renewal = getCardByCode(renewalCode);

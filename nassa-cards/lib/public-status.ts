@@ -3,7 +3,7 @@ import mysql from 'mysql2/promise';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export type PublicServiceKey = 'gpt' | 'claude' | 'deepseek';
+export type PublicServiceKey = 'gpt' | 'claude' | 'deepseek' | 'glm';
 export type PublicServiceStatus = 'healthy' | 'degraded' | 'outage' | 'no_data';
 
 export interface PublicStatusBucket {
@@ -72,6 +72,7 @@ const SERVICES: Array<{ key: PublicServiceKey; name: string }> = [
   { key: 'gpt', name: 'GPT' },
   { key: 'claude', name: 'Claude' },
   { key: 'deepseek', name: 'DeepSeek' },
+  { key: 'glm', name: 'GLM' },
 ];
 
 const REFRESH_SECONDS = 30;
@@ -98,6 +99,7 @@ export function classifyPublicService(model: string | null | undefined): PublicS
   }
 
   if (m.includes('deepseek')) return 'deepseek';
+  if (m.includes('glm') || m.includes('zhipu')) return 'glm';
 
   if (
     m.includes('claude') ||
@@ -279,6 +281,8 @@ async function selectNewApiServiceMetrics(nowMs: number): Promise<Map<PublicServ
         SELECT
           CASE
             WHEN LOWER(model_name) LIKE '%deepseek%' THEN 'deepseek'
+            WHEN LOWER(model_name) LIKE '%glm%'
+              OR LOWER(model_name) LIKE '%zhipu%' THEN 'glm'
             WHEN LOWER(model_name) LIKE '%claude%'
               OR LOWER(model_name) LIKE '%sonnet%'
               OR LOWER(model_name) LIKE '%haiku%'
@@ -343,7 +347,7 @@ async function selectNewApiServiceMetrics(nowMs: number): Promise<Map<PublicServ
     const result = new Map<PublicServiceKey, NewApiServiceMetrics>();
     for (const row of rows) {
       const service = row.service as PublicServiceKey | null;
-      if (service !== 'gpt' && service !== 'claude' && service !== 'deepseek') continue;
+      if (service !== 'gpt' && service !== 'claude' && service !== 'deepseek' && service !== 'glm') continue;
       const tokens24h = toNullableNumber(row.tokens_24h);
       const requests1h = toNullableNumber(row.requests_1h);
       result.set(service, {
@@ -480,12 +484,17 @@ function modelWhereClause(service: PublicServiceKey, model = 'lower(model)'): st
   if (service === 'deepseek') {
     return `${notMiniMax} AND ${model} LIKE '%deepseek%'`;
   }
+  if (service === 'glm') {
+    return `${notMiniMax} AND (${model} LIKE '%glm%' OR ${model} LIKE '%zhipu%')`;
+  }
   if (service === 'claude') {
     return `${notMiniMax} AND (${model} LIKE '%claude%' OR ${model} LIKE '%sonnet%' OR ${model} LIKE '%haiku%' OR ${model} LIKE '%opus%' OR ${model} LIKE '%anthropic%')`;
   }
   return `${notMiniMax}
     AND (${model} LIKE '%gpt%' OR ${model} LIKE '%openai%')
     AND ${model} NOT LIKE '%deepseek%'
+    AND ${model} NOT LIKE '%glm%'
+    AND ${model} NOT LIKE '%zhipu%'
     AND ${model} NOT LIKE '%claude%'
     AND ${model} NOT LIKE '%sonnet%'
     AND ${model} NOT LIKE '%haiku%'

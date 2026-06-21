@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/auth';
-import { insertCard, listCards, listPools, markExpiredCards, getStats, getCurrentHourRequestCountsByCardIds } from '@/lib/db';
+import {
+  GLM_BASE_REQUEST_QUOTA,
+  getGlmRequestUsage,
+  insertCard,
+  listCards,
+  listPools,
+  markExpiredCards,
+  getStats,
+  getCurrentHourRequestCountsByCardIds,
+} from '@/lib/db';
 import { generateCodes } from '@/lib/codes';
 import { isPlanId, PLAN_BY_ID, makePlanFromDays, MIN_CUSTOM_DAYS } from '@/lib/plans';
 import { CATEGORIES, isCategory, type Category } from '@/lib/categories';
@@ -31,7 +40,16 @@ export async function GET(req: NextRequest) {
 
   // 给每张卡附上"当前自然小时请求数",与 RPH 限速口径保持一致。
   const counts = getCurrentHourRequestCountsByCardIds(cards.map((c) => c.id));
-  const enriched = cards.map((c) => ({ ...c, used_1h: counts[c.id] || 0 }));
+  const enriched = cards.map((c) => {
+    const glmUsage = getGlmRequestUsage(c);
+    return {
+      ...c,
+      used_1h: counts[c.id] || 0,
+      used_requests: glmUsage.usedRequests,
+      effective_request_quota: glmUsage.effectiveRequestQuota,
+      remaining_requests: glmUsage.remainingRequests,
+    };
+  });
 
   return NextResponse.json({ success: true, data: { cards: enriched, stats, pools } });
 }
@@ -87,12 +105,15 @@ export async function POST(req: NextRequest) {
     planMeta = PLAN_BY_ID[plan];
   }
   if (!isCategory(category)) {
-    return NextResponse.json({ success: false, message: '无效的卡密分类(必须是 deepseek 或 gpt)' }, { status: 400 });
+    return NextResponse.json({ success: false, message: '无效的卡密分类' }, { status: 400 });
   }
   if (!Number.isInteger(count) || count < 1 || count > 500) {
     return NextResponse.json({ success: false, message: '数量须为 1-500' }, { status: 400 });
   }
   const cat: Category = category;
+  if (cat === 'glm' && planMeta.id !== '1d') {
+    return NextResponse.json({ success: false, message: 'GLM 当前仅支持 GLM-5.2 日卡(1d)' }, { status: 400 });
+  }
   // plan.rphOverride 优先(0 = 不限速),没设置则用 category.defaultRPH
   const rph = planMeta.rphOverride !== undefined ? planMeta.rphOverride : CATEGORIES[cat].defaultRPH;
   const codes = generateCodes(cat, count);
@@ -110,6 +131,10 @@ export async function POST(req: NextRequest) {
         rph_bonus: 0,
         rph_bonus_reason: null,
         rph_bonus_at: null,
+        request_quota: cat === 'glm' && planMeta.id === '1d' ? GLM_BASE_REQUEST_QUOTA : null,
+        request_bonus_quota: 0,
+        request_bonus_reason: null,
+        request_bonus_at: null,
         video_quota: 1,
         video_bonus_quota: 0,
         pool,

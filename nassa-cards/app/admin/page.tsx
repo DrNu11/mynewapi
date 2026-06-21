@@ -33,6 +33,13 @@ interface CardRow {
   rph_bonus: number;
   rph_bonus_reason: string | null;
   rph_bonus_at: number | null;
+  request_quota: number | null;
+  request_bonus_quota: number;
+  request_bonus_reason: string | null;
+  request_bonus_at: number | null;
+  used_requests?: number;
+  effective_request_quota?: number | null;
+  remaining_requests?: number | null;
   used_1h: number;
   status: 'unused' | 'activated' | 'expired' | 'disabled';
   created_at: number;
@@ -87,6 +94,12 @@ export default function AdminDashboard() {
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [bonusId, setBonusId] = useState<number | null>(null);
   const [tab, setTab] = useState<'cards' | 'invites'>('cards');
+
+  useEffect(() => {
+    if (genCategory !== 'glm') return;
+    if (genPlan !== '1d') setGenPlan('1d');
+    if (genCustomDays) setGenCustomDays('');
+  }, [genCategory, genPlan, genCustomDays]);
 
   // invite review state
   interface InviteRedemption {
@@ -208,6 +221,37 @@ export default function AdminDashboard() {
     const baseUrl = `https://card.nassaapi.xyz${meta.baseUrlSuffix}`;
     const models = modelsForCategory(category);
     const isLight = plan === '30d_light';
+
+    if (category === 'glm') {
+      return codes.map((code) => {
+        return `卡密：${code}
+
+激活地址：
+https://card.nassaapi.xyz
+
+激活后会自动生成 sk- 开头的 API Key。
+
+API 请求地址 / Base URL：
+https://card.nassaapi.xyz/v1
+
+支持模型：
+glm-5.2
+
+套餐说明：
+GLM-5.2 日卡，24 小时有效。
+基础可请求 500 次。
+好评后可额外增加 500 次请求额度。
+好评后总共可请求 1000 次。
+
+适合场景：
+智能体调用、代码生成、长文本处理、日常 AI 对话。
+
+使用建议：
+如果客户端支持流式输出，建议开启 stream=true，响应会边生成边返回。
+
+请先进入激活地址输入卡密，激活成功后复制生成的 API Key 使用即可。`;
+      }).join('\n\n---\n\n');
+    }
 
     // DeepSeek normal cards (1d/7d/30d, not light monthly)
     if (category === 'deepseek' && !isLight) {
@@ -452,6 +496,30 @@ ${modelsList}
     }
   }
 
+  async function glmBonusAction(card: CardRow, action: 'apply_glm_review_bonus' | 'clear_glm_review_bonus') {
+    const label = action === 'apply_glm_review_bonus' ? '好评 +500' : '撤销 +500';
+    if (action === 'apply_glm_review_bonus' && !confirm(`确定为 ${card.code} 应用 GLM 好评奖励 +500 次请求额度?`)) return;
+    if (action === 'clear_glm_review_bonus' && !confirm(`确定撤销 ${card.code} 的 GLM +500 次请求额度?`)) return;
+    setBonusId(card.id);
+    try {
+      const res = await fetch(`/api/admin/cards/${encodeURIComponent(card.code)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const body = await res.json();
+      if (!body.success) {
+        alert(`${label}失败: ${body.message}`);
+      } else {
+        await load();
+      }
+    } catch (e: any) {
+      alert(`${label}失败: ${e?.message || e}`);
+    } finally {
+      setBonusId(null);
+    }
+  }
+
   async function loadInvites() {
     setInvitesLoading(true);
     try {
@@ -591,7 +659,7 @@ ${modelsList}
               <select
                 value={genPlan}
                 onChange={(e) => setGenPlan(e.target.value)}
-                disabled={customDaysActive}
+                disabled={customDaysActive || genCategory === 'glm'}
                 className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-brand-500 focus:outline-none disabled:opacity-50"
               >
                 {PLANS.map((p) => (
@@ -613,7 +681,8 @@ ${modelsList}
                 value={genCustomDays}
                 onChange={(e) => setGenCustomDays(e.target.value)}
                 placeholder="留空=套餐 / 0.5=12h"
-                className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-brand-500 focus:outline-none"
+                disabled={genCategory === 'glm'}
+                className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-brand-500 focus:outline-none disabled:opacity-50"
               />
             </div>
             <div>
@@ -801,7 +870,7 @@ ${modelsList}
                   <th className="px-3 py-2.5 font-medium">创建时间</th>
                   <th className="px-3 py-2.5 font-medium">激活时间</th>
                   <th className="px-3 py-2.5 font-medium">到期时间</th>
-                  <th className="px-3 py-2.5 font-medium" title="近 1 小时请求数 / 每小时上限">RPH</th>
+                  <th className="px-3 py-2.5 font-medium" title="普通卡:近 1 小时请求数 / 每小时上限; GLM:成功请求数 / 总请求额度">额度</th>
                   <th className="px-3 py-2.5 font-medium">备注</th>
                   <th className="px-3 py-2.5 font-medium">操作</th>
                 </tr>
@@ -842,22 +911,45 @@ ${modelsList}
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.activated_at)}</td>
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.expires_at)}</td>
                     <td className="px-3 py-2.5 text-xs">
-                      {c.rph === 0 ? (
-                        <span className="text-slate-500">不限</span>
+                      {c.category === 'glm' && c.plan === '1d' ? (
+                        <div className="space-y-0.5">
+                          <span
+                            className={`font-mono ${(c.used_requests || 0) >= (c.effective_request_quota || 0)
+                              ? 'text-red-300'
+                              : (c.used_requests || 0) >= (c.effective_request_quota || 1) * 0.8
+                                ? 'text-amber-300'
+                                : 'text-emerald-300'
+                              }`}
+                          >
+                            {c.used_requests || 0}/{c.effective_request_quota ?? c.request_quota ?? 500}
+                          </span>
+                          <div className="text-[10px] text-slate-500">
+                            基础 {c.request_quota ?? 500} 次
+                            {c.request_bonus_quota > 0 && (
+                              <span className="ml-1 text-emerald-300">+{c.request_bonus_quota}</span>
+                            )}
+                          </div>
+                        </div>
                       ) : (
-                        <span
-                          className={`font-mono ${c.used_1h >= (c.rph + (c.rph_bonus || 0))
-                            ? 'text-red-300'
-                            : c.used_1h >= (c.rph + (c.rph_bonus || 0)) * 0.8
-                              ? 'text-amber-300'
-                              : 'text-slate-300'
-                            }`}
-                        >
-                          {c.used_1h}/{c.rph + (c.rph_bonus || 0)}
-                        </span>
-                      )}
-                      {c.rph_bonus > 0 && (
-                        <span className="ml-1 text-[10px] text-amber-400">+{c.rph_bonus}</span>
+                        <>
+                          {c.rph === 0 ? (
+                            <span className="text-slate-500">不限</span>
+                          ) : (
+                            <span
+                              className={`font-mono ${c.used_1h >= (c.rph + (c.rph_bonus || 0))
+                                ? 'text-red-300'
+                                : c.used_1h >= (c.rph + (c.rph_bonus || 0)) * 0.8
+                                  ? 'text-amber-300'
+                                  : 'text-slate-300'
+                                }`}
+                            >
+                              {c.used_1h}/{c.rph + (c.rph_bonus || 0)}
+                            </span>
+                          )}
+                          {c.rph_bonus > 0 && (
+                            <span className="ml-1 text-[10px] text-amber-400">+{c.rph_bonus}</span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-xs text-slate-500">{c.notes || '-'}</td>
@@ -945,6 +1037,45 @@ ${modelsList}
                                 <ThumbsUp className="h-3 w-3" />
                               )}
                               好评 +55
+                            </button>
+                          )
+                        )}
+                        {/* GLM 请求额度奖励: 仅 GLM-5.2 日卡,好评 +500 次 */}
+                        {c.category === 'glm' && c.plan === '1d' && c.status !== 'expired' && c.status !== 'disabled' && (
+                          c.request_bonus_quota > 0 ? (
+                            <>
+                              <button
+                                disabled
+                                className="flex items-center gap-1 rounded border border-emerald-500/40 px-2 py-1 text-xs text-emerald-300"
+                              >
+                                <ThumbsUp className="h-3 w-3" />
+                                已奖励 +500
+                              </button>
+                              <button
+                                onClick={() => glmBonusAction(c, 'clear_glm_review_bonus')}
+                                disabled={bonusId === c.id}
+                                className="flex items-center gap-1 rounded border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+                              >
+                                {bonusId === c.id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="h-3 w-3" />
+                                )}
+                                撤销 +500
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => glmBonusAction(c, 'apply_glm_review_bonus')}
+                              disabled={bonusId === c.id}
+                              className="flex items-center gap-1 rounded border border-emerald-500/40 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                            >
+                              {bonusId === c.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <ThumbsUp className="h-3 w-3" />
+                              )}
+                              好评 +500
                             </button>
                           )
                         )}
