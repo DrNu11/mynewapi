@@ -47,6 +47,7 @@ export async function PATCH(
     pool?: string;
     newapi_user_id?: number | string | null;
     disable_reason?: string | null;
+    rph_bonus_amount?: number | string | null;
   };
   try {
     body = await req.json();
@@ -82,7 +83,7 @@ export async function PATCH(
     return NextResponse.json({ success: true, data: { card: updated } });
   }
 
-  // RPH 加成 (当前仅 deepseek 1d/7d/30d, 好评 +55)
+  // RPH 加成 (当前仅 deepseek 1d/7d/30d, 默认好评 +55,支持后台自定义每小时加成)
   if (action === 'apply_rph_bonus') {
     if (!isRphBonusEligible(card)) {
       return NextResponse.json(
@@ -90,7 +91,16 @@ export async function PATCH(
         { status: 400 }
       );
     }
-    const updated = applyRphBonus(code);
+    const rawAmount = body.rph_bonus_amount === undefined || body.rph_bonus_amount === null || body.rph_bonus_amount === ''
+      ? 55
+      : Number(body.rph_bonus_amount);
+    if (!Number.isInteger(rawAmount) || rawAmount < 1 || rawAmount > 100000) {
+      return NextResponse.json(
+        { success: false, message: 'RPH 加成必须是 1-100000 的整数。', error: { message: 'RPH 加成必须是 1-100000 的整数。', type: 'invalid_request_error', code: 'invalid_rph_bonus_amount' } },
+        { status: 400 }
+      );
+    }
+    const updated = applyRphBonus(code, rawAmount);
     return NextResponse.json({ success: true, data: { card: updated } });
   }
 

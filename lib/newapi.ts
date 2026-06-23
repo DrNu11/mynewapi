@@ -93,9 +93,18 @@ export interface CreateTokenInput {
   targetUserId?: number | null;
 }
 
-/** 创建 token (NewAPI 不返回 id/key,需要后续 search 找到) */
+/** 创建 token (NewAPI 不返回 id/key,需要后续 search 找到)
+ *
+ *  token 的 allow_ips 从环境变量 NEWAPI_TOKEN_ALLOW_IPS 读取,
+ *  生产环境必须配置为代理 IP(如 172.18.0.1/32),阻止客户绕过 nassa-cards 直连 NewAPI。
+ *  本地开发可留空。
+ */
 export async function createToken(input: CreateTokenInput): Promise<void> {
   const hasQuota = typeof input.quotaUSD === 'number' && input.quotaUSD > 0;
+  const allowIps = process.env.NEWAPI_TOKEN_ALLOW_IPS ?? '';
+  if (process.env.NODE_ENV === 'production' && !allowIps) {
+    throw new Error('生产环境必须配置 NEWAPI_TOKEN_ALLOW_IPS');
+  }
   await call('/api/token/', {
     method: 'POST',
     body: JSON.stringify({
@@ -107,7 +116,7 @@ export async function createToken(input: CreateTokenInput): Promise<void> {
       model_limits: input.model_limits,
       group: input.group ?? 'default',
       cross_group_retry: false,
-      allow_ips: '',
+      allow_ips: allowIps,
     }),
   }, input.targetUserId);
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2, Film } from 'lucide-react';
+import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2, Film, Presentation } from 'lucide-react';
 import { formatDaysCN } from '@/lib/plans';
 import PublicStatusPanel from '@/components/public-status-panel';
 
@@ -168,6 +168,15 @@ interface UsageState {
   daily7d?: DailyCount[];
   dailyByModel7d?: DailyByModel[];
   topModels7d?: ModelCount[];
+  // DeepSeek 轻度月卡加权点数
+  weightedPoints?: {
+    weightedPoints24h: number;
+    weightedPoints7d: number;
+    weightedPointsTotal: number;
+    weightedQuota24h: number;
+    weightedQuota7d: number;
+    weightedQuotaTotal: number;
+  } | null;
 }
 
 // 模型名 → 颜色(按名哈希 → HSL 色相,保证同名同色、各模型色相均匀)
@@ -265,6 +274,7 @@ export default function ResultPage() {
           daily7d: j.data.daily_7d,
           dailyByModel7d: j.data.daily_by_model_7d,
           topModels7d: j.data.top_models_7d,
+          weightedPoints: j.data.weightedPoints ?? null,
           loading: false,
           fetchedAt: Math.floor(Date.now() / 1000),
         });
@@ -311,6 +321,7 @@ export default function ResultPage() {
           daily7d: j.data.daily_7d,
           dailyByModel7d: j.data.daily_by_model_7d,
           topModels7d: j.data.top_models_7d,
+          weightedPoints: j.data.weightedPoints ?? null,
           loading: false,
           fetchedAt: Math.floor(Date.now() / 1000),
         });
@@ -443,6 +454,25 @@ export default function ResultPage() {
           </div>
           <span className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-medium text-white">
             生成视频
+            <ExternalLink className="h-4 w-4" />
+          </span>
+        </a>
+
+        <a
+          href="/ppt"
+          className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-sky-500/50 bg-sky-500/10 px-5 py-4 shadow-lg shadow-sky-500/10 transition hover:border-sky-400 hover:bg-sky-500/15"
+        >
+          <div className="flex min-w-0 items-start gap-3">
+            <Presentation className="mt-0.5 h-5 w-5 shrink-0 text-sky-300" />
+            <div className="min-w-0">
+              <div className="font-semibold text-slate-100">AI PPT 生成已开放</div>
+              <div className="mt-1 text-sm text-slate-400">
+                请求地址固定为 https://card.nassaapi.xyz/，进入后只需确认当前 API Key。
+              </div>
+            </div>
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white">
+            生成 PPT
             <ExternalLink className="h-4 w-4" />
           </span>
         </a>
@@ -837,15 +867,21 @@ export default function ResultPage() {
             <div className="mt-4 space-y-3">
               <div className="flex items-center justify-between rounded-lg border border-purple-500/20 bg-purple-500/5 px-4 py-3">
                 <span className="text-sm text-purple-200">近 24 小时调用额度</span>
-                <span className="font-mono text-sm text-purple-100">0 / 2000 点</span>
+                <span className="font-mono text-sm text-purple-100">
+                  {usage?.weightedPoints?.weightedPoints24h ?? 0} / {usage?.weightedPoints?.weightedQuota24h ?? 2000} 点
+                </span>
               </div>
               <div className="flex items-center justify-between rounded-lg border border-purple-500/20 bg-purple-500/5 px-4 py-3">
                 <span className="text-sm text-purple-200">近 7 天调用额度</span>
-                <span className="font-mono text-sm text-purple-100">0 / 10000 点</span>
+                <span className="font-mono text-sm text-purple-100">
+                  {usage?.weightedPoints?.weightedPoints7d ?? 0} / {usage?.weightedPoints?.weightedQuota7d ?? 10000} 点
+                </span>
               </div>
               <div className="flex items-center justify-between rounded-lg border border-purple-500/20 bg-purple-500/5 px-4 py-3">
                 <span className="text-sm text-purple-200">月卡总调用额度</span>
-                <span className="font-mono text-sm text-purple-100">0 / 40000 点</span>
+                <span className="font-mono text-sm text-purple-100">
+                  {usage?.weightedPoints?.weightedPointsTotal ?? 0} / {usage?.weightedPoints?.weightedQuotaTotal ?? 40000} 点
+                </span>
               </div>
             </div>
             <div className="mt-4 rounded-lg bg-purple-500/10 px-4 py-3">
