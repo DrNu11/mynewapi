@@ -1,5 +1,36 @@
 # 项目概览
 
+## 新电脑快速上手
+
+```bash
+git clone https://github.com/DrNu11/card.git
+cd card
+npm install
+
+# 恢复 SSH 密钥
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+cp ssh-backup/* ~/.ssh/
+chmod 600 ~/.ssh/id_ed25519 ~/.ssh/gcp_instance ~/.ssh/google_compute_engine ~/.ssh/tosell_gcp_ed25519
+
+# 测试连接
+ssh root@207.244.243.12 "echo OK"
+
+# 启动开发服务器
+npm run dev
+```
+
+`.env.local` 和 SSH 密钥已包含在仓库中（私有仓库）。新电脑 `git pull` 即可同步最新代码。
+
+如需完整 monorepo：
+
+```bash
+git clone https://github.com/DrNu11/mynewapi.git
+cd mynewapi
+git checkout fix/allow-ips-deepseek-light-points
+```
+
+---
+
 本项目是 `nassa-cards` 卡密激活与 OpenAI 兼容代理系统。客户输入卡密后，系统为其生成 NewAPI token，并返回可在 OpenAI 兼容客户端、Claude Code、Cursor、Codex CLI 等工具中使用的 API Key 与 Base URL。
 
 核心能力：
