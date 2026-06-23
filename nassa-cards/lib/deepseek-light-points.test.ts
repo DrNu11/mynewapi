@@ -321,54 +321,82 @@ describe('getMergedTotalRequestStats logic', () => {
   });
 });
 
-// ── 合并每日趋势 (模拟 getMergedDailyCountsLastNDays) ──
-function simulateMergedDaily(
+// ── 合并每日趋势 (使用 stat_day, 不再均匀分摊) ──
+interface AdjDailyRow {
+  request_count: number;
+  stat_day: string;
+}
+
+function simulateMergedDailyFromAdj(
   rlDaily: Array<{ date: string; count: number }>,
-  adjCount: number,
-  adjStartDate: string,
-  adjEndDate: string,
+  adjustments: AdjDailyRow[],
 ): Array<{ date: string; count: number }> {
-  // 计算跨越天数，均匀分摊
-  const start = new Date(adjStartDate);
-  const end = new Date(adjEndDate);
-  const spanDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
-  const perDay = Math.floor(adjCount / spanDays);
-  let remainder = adjCount - perDay * spanDays;
-  const dailyAdj = new Map<string, number>();
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const key = d.toISOString().slice(0, 10);
-    let count = perDay;
-    if (remainder > 0) { count++; remainder--; }
-    dailyAdj.set(key, count);
+  const adjByDay = new Map<string, number>();
+  for (const adj of adjustments) {
+    adjByDay.set(adj.stat_day, (adjByDay.get(adj.stat_day) || 0) + adj.request_count);
   }
   for (const d of rlDaily) {
-    d.count += dailyAdj.get(d.date) || 0;
+    d.count += adjByDay.get(d.date) || 0;
   }
   return rlDaily;
 }
 
-describe('getMergedDailyCountsLastNDays logic', () => {
-  it('423 次跨 2 天 → 每天 211/212 次', () => {
+describe('getMergedDailyCountsLastNDays logic (stat_day, 不平均分摊)', () => {
+  it('补账记录按 stat_day 直接归属到对应日期', () => {
     const rlDaily = [
       { date: '2026-06-22', count: 1 },
       { date: '2026-06-23', count: 0 },
     ];
-    const result = simulateMergedDaily(rlDaily, 423, '2026-06-22', '2026-06-23');
+    const result = simulateMergedDailyFromAdj(rlDaily, [
+      { request_count: 170, stat_day: '2026-06-22' },
+      { request_count: 253, stat_day: '2026-06-23' },
+    ]);
+    expect(result[0].count).toBe(171);  // 1 + 170
+    expect(result[1].count).toBe(253);  // 0 + 253
     const total = result.reduce((s, d) => s + d.count, 0);
-    expect(total).toBe(424); // 1 + 423
-    expect(result[0].count).toBeGreaterThan(200); // ~211
-    expect(result[1].count).toBeGreaterThan(200); // ~212
+    expect(total).toBe(424);
   });
 
-  it('adjustment 跨 1 天 → 全部分到当天', () => {
+  it('不允许均匀分摊 — 每条补账精确归属到 stat_day', () => {
+    const rlDaily = [
+      { date: '2026-06-22', count: 0 },
+      { date: '2026-06-23', count: 0 },
+    ];
+    const result = simulateMergedDailyFromAdj(rlDaily, [
+      { request_count: 100, stat_day: '2026-06-23' },
+    ]);
+    // 100 全在 June 23, June 22 不受影响
+    expect(result[0].count).toBe(0);
+    expect(result[1].count).toBe(100);
+  });
+
+  it('stat_day 为 null 的旧记录被排除(voided检查在外层)', () => {
     const rlDaily = [{ date: '2026-06-22', count: 0 }];
-    const result = simulateMergedDaily(rlDaily, 100, '2026-06-22', '2026-06-22');
-    expect(result[0].count).toBe(100);
+    const result = simulateMergedDailyFromAdj(rlDaily, []);
+    expect(result[0].count).toBe(0);
   });
 
-  it('无 adjustments → 纯 request_logs', () => {
+  it('void 旧 batch 后统计排除对应记录', () => {
+    // voided_at IS NOT NULL 的记录被 db helper 排除
+    // 模拟: adjustments 参数不包含已 void 的记录
     const rlDaily = [{ date: '2026-06-22', count: 5 }];
-    const result = simulateMergedDaily(rlDaily, 0, '2026-06-22', '2026-06-22');
-    expect(result[0].count).toBe(5);
+    const result = simulateMergedDailyFromAdj(rlDaily, []);
+    expect(result[0].count).toBe(5); // 只有 request_logs
+  });
+
+  it('旧聚合batch被void后, 新daily batch的stat_day驱动趋势', () => {
+    // 旧 batch (均匀分摊212/212) → voided
+    // 新 batch (stat_day): 6/22=170, 6/23=253
+    const rlDaily = [
+      { date: '2026-06-22', count: 1 },
+      { date: '2026-06-23', count: 0 },
+    ];
+    const newAdj = [
+      { request_count: 170, stat_day: '2026-06-22' },
+      { request_count: 253, stat_day: '2026-06-23' },
+    ];
+    const result = simulateMergedDailyFromAdj(rlDaily, newAdj);
+    expect(result[0].count).toBe(171);
+    expect(result[1].count).toBe(253);
   });
 });

@@ -1,18 +1,18 @@
 /**
- * 历史绕过用量对账脚本 — 单卡 dry-run / apply
- *
- * 将 NewAPI logs 中直连绕过 nassa-cards 的历史请求,
- * 按模型统计后写入 card_usage_adjustments 补账表。
+ * 历史绕过用量对账脚本 — 按 NewAPI logs 真实每日聚合
  *
  * 用法:
- *   npm run backfill-newapi-bypass-usage -- --card DE-V2Q5-424P-Y9CE          (dry-run)
- *   npm run backfill-newapi-bypass-usage -- --card DE-V2Q5-424P-Y9CE --apply  (写入)
+ *   npm run backfill-newapi-bypass-usage -- --card DE-V2Q5-424P-Y9CE              (dry-run)
+ *   npm run backfill-newapi-bypass-usage -- --card DE-V2Q5-424P-Y9CE --apply      (写入按天记录)
+ *   npm run backfill-newapi-bypass-usage -- --void-batch 1eff2afbe63c44f6         (void旧batch dry-run)
+ *   npm run backfill-newapi-bypass-usage -- --void-batch 1eff2afbe63c44f6 --apply (void旧batch)
+ *
+ * stat_day: 北京时间(UTC+8)自然日, 与 result 页面 locatime 口径一致
  *
  * 安全:
- *   - 默认 dry-run, 必须显式传 --apply 才写入
- *   - 同一 card_code + token_id + 时间范围 + source + batch_id 防重复
- *   - 未知模型单独列出, 不静默计入
- *   - 通过 docker exec 查询 NewAPI MySQL, 不暴露 DSN 密码
+ *   - 默认 dry-run
+ *   - UNIQUE 索引防重复(card_code, token_id, model, stat_day, source, batch_id)
+ *   - voided_at 标记废弃旧记录, 不物理删除
  */
 
 import Database from 'better-sqlite3';
@@ -30,7 +30,7 @@ function modelWeight(model: string | null): number {
   const m = (model || '').trim();
   if (m === 'deepseek-v4-pro') return 3;
   if (m === 'deepseek-v4-flash' || m === 'DeepSeek') return 1;
-  return -1; // 未知 → suspicious
+  return -1;
 }
 
 // ── NewAPI query via docker exec ─────────────────────────────────
@@ -38,7 +38,6 @@ const MYSQL_CMD =
   "docker exec newapi-prod-mysql-1 mysql -uroot -peZ1rW9jR6mU6uP4b new-api --default-character-set=utf8mb4 -N -e";
 
 function queryNewApi(sql: string): string {
-  // 使用 heredoc 避免 shell 转义问题
   const escaped = sql.replace(/'/g, "'\\''");
   return execSync(`${MYSQL_CMD} '${escaped}'`, {
     encoding: 'utf-8',
@@ -47,42 +46,62 @@ function queryNewApi(sql: string): string {
   });
 }
 
-interface NewApiLogRow {
-  model_name: string;
-  created_at: number;
-}
-
 // ── main ─────────────────────────────────────────────────────────
 async function main() {
   const args = process.argv.slice(2);
   const apply = args.includes('--apply');
   const cardIdx = args.indexOf('--card');
   const cardCode = cardIdx >= 0 ? args[cardIdx + 1] : null;
+  const voidIdx = args.indexOf('--void-batch');
+  const voidBatch = voidIdx >= 0 ? args[voidIdx + 1] : null;
+
+  // ── 打开 SQLite ──────────────────────────────────────────────
+  const dbPath = path.resolve(process.cwd(), 'data/cards.db');
+  const sqlite = new Database(dbPath);
+
+  // ── void 模式 ─────────────────────────────────────────────────
+  if (voidBatch) {
+    const mode = apply ? '⚠️  VOID APPLY' : '🔍 VOID DRY-RUN';
+    console.log(`${mode} — batch: ${voidBatch}`);
+    const existing = sqlite
+      .prepare('SELECT id, card_code, model, request_count, weighted_points FROM card_usage_adjustments WHERE external_batch_id = ? AND voided_at IS NULL')
+      .all(voidBatch) as any[];
+    if (existing.length === 0) {
+      console.log('  没有找到未 void 的记录');
+      sqlite.close();
+      process.exit(0);
+    }
+    console.log(`  找到 ${existing.length} 条记录:`);
+    for (const r of existing) {
+      console.log(`    ${r.card_code}  ${r.model.padEnd(20)}  ${r.request_count}次  ${r.weighted_points}点`);
+    }
+    if (!apply) {
+      console.log('\n  [DRY-RUN] 加 --apply 执行 void。');
+      sqlite.close();
+      process.exit(0);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    sqlite.prepare('UPDATE card_usage_adjustments SET voided_at = ? WHERE external_batch_id = ? AND voided_at IS NULL').run(now, voidBatch);
+    console.log(`\n  ✅ 已 void ${existing.length} 条记录`);
+    sqlite.close();
+    process.exit(0);
+  }
+
+  // ── 补账模式 ─────────────────────────────────────────────────
   if (!cardCode) {
     console.log('用法: npm run backfill-newapi-bypass-usage -- --card DE-XXXX-XXXX-XXXX [--apply]');
+    console.log('      npm run backfill-newapi-bypass-usage -- --void-batch <batch_id> [--apply]');
     process.exit(1);
   }
 
   const mode = apply ? '⚠️  APPLY' : '🔍 DRY-RUN';
   console.log(`${mode} — 卡密: ${cardCode}`);
 
-  // ── 1. 读 nassa-cards SQLite ─────────────────────────────────
-  const dbPath = path.resolve(process.cwd(), 'data/cards.db');
-  const sqlite = new Database(dbPath);
-
   const card = sqlite
-    .prepare(
-      'SELECT id, code, newapi_token_id, activated_at, category, plan FROM cards WHERE code = ?',
-    )
+    .prepare('SELECT id, code, newapi_token_id, activated_at, category, plan FROM cards WHERE code = ?')
     .get(cardCode) as any;
-  if (!card) {
-    console.error(`卡 ${cardCode} 不存在`);
-    sqlite.close();
-    process.exit(1);
-  }
-  console.log(
-    `  nassa 卡: ${card.code}  token_id=${card.newapi_token_id}  plan=${card.plan}  category=${card.category}`,
-  );
+  if (!card) { console.error(`卡 ${cardCode} 不存在`); sqlite.close(); process.exit(1); }
+  console.log(`  nassa 卡: ${card.code}  token_id=${card.newapi_token_id}  plan=${card.plan}`);
 
   if (card.category !== 'deepseek' || card.plan !== '30d_light') {
     console.log(`  ⚠️  非 DeepSeek 轻度月卡, 跳过`);
@@ -90,126 +109,120 @@ async function main() {
     process.exit(0);
   }
 
-  // ── 2. 读 NewAPI logs ────────────────────────────────────────
+  // ── 查询 NewAPI logs, 按北京时间 day + model 聚合 ────────────
   const raw = queryNewApi(
-    `SELECT model_name, created_at FROM logs WHERE token_id = ${card.newapi_token_id} ORDER BY created_at`,
+    `SELECT DATE_FORMAT(FROM_UNIXTIME(created_at + 28800), '%Y-%m-%d') AS day_bj,
+            model_name,
+            COUNT(*) AS cnt
+     FROM logs WHERE token_id = ${card.newapi_token_id}
+     GROUP BY day_bj, model_name
+     ORDER BY day_bj, model_name`,
   );
 
-  const logRows: NewApiLogRow[] = raw
+  const dailyRows: Array<{ day: string; model: string; count: number }> = raw
     .trim()
     .split('\n')
     .filter((l) => l.trim())
     .map((line) => {
       const cols = line.split('\t');
-      return { model_name: cols[0] || '', created_at: Number(cols[1]) || 0 };
+      return { day: cols[0], model: cols[1] || '', count: Number(cols[2]) || 0 };
     });
 
-  if (logRows.length === 0) {
+  if (dailyRows.length === 0) {
     console.log('  NewAPI logs: 0 条, 无需补账');
     sqlite.close();
     process.exit(0);
   }
 
-  const minTs = logRows[0].created_at;
-  const maxTs = logRows[logRows.length - 1].created_at;
-  console.log(
-    `  NewAPI logs: ${logRows.length} 条  时间: ${new Date(minTs * 1000).toISOString()} ~ ${new Date(maxTs * 1000).toISOString()}`,
+  // 获取时间范围用于 original_started_at / original_ended_at
+  const rangeRaw = queryNewApi(
+    `SELECT MIN(created_at), MAX(created_at) FROM logs WHERE token_id = ${card.newapi_token_id}`,
   );
+  const [minTs, maxTs] = rangeRaw.trim().split('\t').map(Number);
 
-  // ── 3. 按模型分组统计 ───────────────────────────────────────
-  const byModel = new Map<string, { count: number; weighted: number }>();
+  console.log(`  NewAPI logs 每日聚合 (北京时间):`);
+  console.log(`  stat_day      model                     requests   points`);
+  console.log(`  --------------------------------------------------------`);
+
+  // 按 day+model 汇总
+  const byDayModel = new Map<string, { day: string; model: string; count: number; points: number }>();
+  let totalReq = 0;
+  let totalPts = 0;
   const suspicious: string[] = [];
 
-  for (const row of logRows) {
-    const w = modelWeight(row.model_name);
+  for (const r of dailyRows) {
+    const w = modelWeight(r.model);
     if (w < 0) {
-      if (!suspicious.includes(row.model_name)) suspicious.push(row.model_name);
+      if (!suspicious.includes(r.model)) suspicious.push(r.model);
       continue;
     }
-    const entry = byModel.get(row.model_name) || { count: 0, weighted: 0 };
-    entry.count++;
-    entry.weighted += w;
-    byModel.set(row.model_name, entry);
+    const key = `${r.day}|${r.model}`;
+    const entry = byDayModel.get(key) || { day: r.day, model: r.model, count: 0, points: 0 };
+    entry.count += r.count;
+    entry.points += r.count * w;
+    byDayModel.set(key, entry);
+    totalReq += r.count;
+    totalPts += r.count * w;
   }
 
-  let totalPoints = 0;
-  let totalRequests = 0;
-  console.log('\n  按模型分组:');
-  console.log('  model                     requests   weighted_points');
-  console.log('  ------------------------------------------------');
-  for (const [model, stats] of [...byModel.entries()].sort(
-    (a, b) => b[1].weighted - a[1].weighted,
-  )) {
-    totalPoints += stats.weighted;
-    totalRequests += stats.count;
-    console.log(
-      `  ${model.padEnd(25)} ${String(stats.count).padStart(8)}   ${String(stats.weighted).padStart(14)}`,
-    );
+  const sorted = [...byDayModel.values()].sort((a, b) => a.day.localeCompare(b.day) || a.model.localeCompare(b.model));
+  for (const r of sorted) {
+    console.log(`  ${r.day}      ${r.model.padEnd(25)} ${String(r.count).padStart(5)}   ${String(r.points).padStart(7)}`);
   }
-  console.log('  ------------------------------------------------');
-  console.log(
-    `  TOTAL                     ${String(totalRequests).padStart(8)}   ${String(totalPoints).padStart(14)}`,
-  );
+  console.log(`  --------------------------------------------------------`);
+  console.log(`  TOTAL                             ${String(totalReq).padStart(5)}   ${String(totalPts).padStart(7)}`);
 
   if (suspicious.length > 0) {
-    console.log(`\n  ⚠️  未知模型(不会计入补账): ${suspicious.join(', ')}`);
+    console.log(`\n  ⚠️  未知模型(不计入): ${suspicious.join(', ')}`);
   }
 
-  // ── 4. 防重复检查 ──────────────────────────────────────────
+  // ── 防重复检查 ──────────────────────────────────────────────
   const batchId = crypto
     .createHash('sha256')
-    .update(`${cardCode}-${card.newapi_token_id}-${minTs}-${maxTs}-newapi_bypass_backfill`)
+    .update(`${cardCode}-${card.newapi_token_id}-daily-${Date.now()}`)
     .digest('hex')
     .slice(0, 16);
 
-  const existing = sqlite
+  // 检查是否已有未 void 的每日记录
+  const existingDaily = sqlite
     .prepare(
       `SELECT COUNT(*) as cnt FROM card_usage_adjustments
        WHERE card_code = ? AND newapi_token_id = ?
          AND source = 'newapi_bypass_backfill'
-         AND original_started_at = ? AND original_ended_at = ?`,
+         AND stat_day IS NOT NULL AND voided_at IS NULL`,
     )
-    .get(cardCode, card.newapi_token_id, minTs, maxTs) as any;
+    .get(cardCode, card.newapi_token_id) as any;
 
-  if (existing?.cnt > 0) {
-    console.log(`\n  ❌ 已存在补账记录 (${existing.cnt} 条), 跳过 (防重复)`);
+  if (existingDaily?.cnt > 0) {
+    console.log(`\n  ❌ 已存在 ${existingDaily.cnt} 条未 void 的每日补账记录, 先 --void-batch 清理旧记录`);
     sqlite.close();
     process.exit(1);
   }
 
-  // ── 5. 写入预览 / 实际写入 ──────────────────────────────────
-  const insertCount = byModel.size;
-  console.log(`\n  预计写入 card_usage_adjustments: ${insertCount} 条`);
+  console.log(`\n  预计写入: ${sorted.length} 条 (按天+模型)`);
   console.log(`  batch_id: ${batchId}`);
 
   if (!apply) {
-    console.log('\n  [DRY-RUN] 未写入。加 --apply 执行实际写入。');
+    console.log('\n  [DRY-RUN] 未写入。加 --apply 执行。');
     sqlite.close();
     process.exit(0);
   }
 
-  // --apply: 写入
+  // ── apply: 写入 ─────────────────────────────────────────────
   const now = Math.floor(Date.now() / 1000);
   const insert = sqlite.prepare(
     `INSERT INTO card_usage_adjustments
        (card_code, newapi_token_id, source, model, request_count, weighted_points,
-        original_started_at, original_ended_at, created_at, reason, external_batch_id)
-     VALUES (?, ?, 'newapi_bypass_backfill', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        original_started_at, original_ended_at, stat_day, created_at, reason, external_batch_id)
+     VALUES (?, ?, 'newapi_bypass_backfill', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
-  const dateLabel = new Date(minTs * 1000).toISOString().slice(0, 10);
   const txn = sqlite.transaction(() => {
-    for (const [model, stats] of byModel) {
+    for (const r of sorted) {
       insert.run(
-        cardCode,
-        card.newapi_token_id,
-        model,
-        stats.count,
-        stats.weighted,
-        minTs,
-        maxTs,
-        now,
-        `allow_ips 修复前直连绕过补账 — ${cardCode} — ${dateLabel}`,
+        cardCode, card.newapi_token_id, r.model, r.count, r.points,
+        minTs, maxTs, r.day, now,
+        `allow_ips 修复前直连绕过补账(按天) — ${cardCode}`,
         batchId,
       );
     }
@@ -219,7 +232,7 @@ async function main() {
   const written = sqlite
     .prepare('SELECT COUNT(*) as cnt FROM card_usage_adjustments WHERE external_batch_id = ?')
     .get(batchId) as any;
-  console.log(`\n  ✅ 已写入 ${written.cnt} 条补账记录, batch_id=${batchId}`);
+  console.log(`\n  ✅ 已写入 ${written.cnt} 条每日补账记录, batch_id=${batchId}`);
 
   sqlite.close();
 }
