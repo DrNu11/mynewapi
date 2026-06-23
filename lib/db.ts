@@ -71,12 +71,15 @@ function init(inst: Database.Database) {
       weighted_points INTEGER NOT NULL DEFAULT 0,
       original_started_at INTEGER NOT NULL,
       original_ended_at INTEGER NOT NULL,
+      stat_day TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      voided_at INTEGER DEFAULT NULL,
       reason TEXT,
       external_batch_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_cua_card ON card_usage_adjustments(card_code, newapi_token_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_cua_batch ON card_usage_adjustments(card_code, newapi_token_id, model, source, original_started_at, original_ended_at, external_batch_id);
+    CREATE INDEX IF NOT EXISTS idx_cua_stat_day ON card_usage_adjustments(card_code, stat_day);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cua_batch ON card_usage_adjustments(card_code, newapi_token_id, model, stat_day, source, external_batch_id);
 
     CREATE TABLE IF NOT EXISTS admin_sessions (
       id TEXT PRIMARY KEY,
@@ -1238,7 +1241,7 @@ export function getDeepSeekLightWeightedUsage(card: {
       .prepare(
         `SELECT weighted_points, original_started_at, original_ended_at
          FROM card_usage_adjustments
-         WHERE card_code = ? AND newapi_token_id = ?`,
+         WHERE card_code = ? AND newapi_token_id = ? AND voided_at IS NULL`,
       )
       .all(card.code, card.newapi_token_id) as Array<{
         weighted_points: number;
@@ -1485,47 +1488,30 @@ export function getTotalRequestStats(skKey: string): {
   };
 }
 
-/** 查询 card_usage_adjustments 的合并统计 (用于 request_logs 补账) */
+/** 查询 card_usage_adjustments 的合并统计 (用于 request_logs 补账, 排除已 void 的记录) */
 function getAdjustmentStats(
   cardCode: string,
   newapiTokenId: number | null,
-): { total: number; byStartDate: Map<string, number> } {
+): { total: number; byDate: Map<string, number> } {
   const total = { total: 0 };
-  const byStartDate = new Map<string, number>();
-  if (!newapiTokenId) return { total: 0, byStartDate };
+  const byDate = new Map<string, number>();
+  if (!newapiTokenId) return { total: 0, byDate };
   const rows = db()
     .prepare(
-      `SELECT request_count, original_started_at, original_ended_at
+      `SELECT request_count, stat_day
        FROM card_usage_adjustments
-       WHERE card_code = ? AND newapi_token_id = ?`,
+       WHERE card_code = ? AND newapi_token_id = ? AND voided_at IS NULL`,
     )
     .all(cardCode, newapiTokenId) as Array<{
     request_count: number;
-    original_started_at: number;
-    original_ended_at: number;
+    stat_day: string | null;
   }>;
   for (const r of rows) {
     total.total += r.request_count;
-    // 按原始时间窗口跨度的日历天数均匀分摊到每天
-    const startDay = new Date(r.original_started_at * 1000);
-    const endDay = new Date(r.original_ended_at * 1000);
-    // 计算跨越的本地日期数(至少 1 天)
-    const startDate = new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate());
-    const endDate = new Date(endDay.getFullYear(), endDay.getMonth(), endDay.getDate());
-    const spanDays = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
-    const perDay = Math.floor(r.request_count / spanDays);
-    let remainder = r.request_count - perDay * spanDays;
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      const key = `${y}-${m}-${day}`;
-      let count = perDay;
-      if (remainder > 0) { count++; remainder--; }
-      byStartDate.set(key, (byStartDate.get(key) || 0) + count);
-    }
+    const day = r.stat_day || 'unknown';
+    byDate.set(day, (byDate.get(day) || 0) + r.request_count);
   }
-  return { total: total.total, byStartDate };
+  return { total: total.total, byDate };
 }
 
 /** 合并 request_logs + card_usage_adjustments 的累计统计(30d_light 用) */
@@ -1555,7 +1541,7 @@ export function getMergedDailyCountsLastNDays(
   if (adj.total === 0) return rlDaily;
   // 合并: 把 adj 的每日数量加到对应日期上
   for (const d of rlDaily) {
-    const adjCount = adj.byStartDate.get(d.date) || 0;
+    const adjCount = adj.byDate.get(d.date) || 0;
     d.count += adjCount;
   }
   return rlDaily;
