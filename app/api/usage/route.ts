@@ -22,6 +22,7 @@ import {
   getDeepSeekLightWeightedUsage,
   getMergedTotalRequestStats,
   getMergedDailyCountsLastNDays,
+  getMergedDailyCountsByModelLastNDays,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -86,7 +87,9 @@ export async function POST(req: NextRequest) {
   const daily7d = isDeepSeekLight
     ? getMergedDailyCountsLastNDays(sk, card.code, card.newapi_token_id ?? null, 7)
     : getDailyCountsLastNDays(sk, 7);
-  const dailyByModel7d = getDailyCountsByModelLastNDays(sk, 7);
+  const dailyByModel7d = isDeepSeekLight
+    ? getMergedDailyCountsByModelLastNDays(sk, card.code, card.newapi_token_id ?? null, 7)
+    : getDailyCountsByModelLastNDays(sk, 7);
   const topModels7d = getTopModelsLastNDays(sk, 7, 5);
   const successRate =
     totalStats.total > 0
