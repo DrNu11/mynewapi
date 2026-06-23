@@ -1,0 +1,5 @@
+Host tosell-gcp
+  HostName 35.254.163.51
+  User tosell
+  IdentityFile ~/.ssh/tosell_gcp_ed25519
+  IdentitiesOnly yes
