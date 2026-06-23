@@ -1547,6 +1547,48 @@ export function getMergedDailyCountsLastNDays(
   return rlDaily;
 }
 
+/** 合并 request_logs + card_usage_adjustments 近 N 天按模型分布(堆叠柱状图用) */
+export function getMergedDailyCountsByModelLastNDays(
+  skKey: string,
+  cardCode: string,
+  newapiTokenId: number | null,
+  days: number,
+): Array<{ date: string; total: number; by_model: Record<string, number> }> {
+  const rlDaily = getDailyCountsByModelLastNDays(skKey, days);
+  if (!newapiTokenId) return rlDaily;
+
+  // 读取未 void 的调整记录, 按 stat_day + model 汇总
+  const adjRows = db()
+    .prepare(
+      `SELECT stat_day, model, SUM(request_count) as cnt
+       FROM card_usage_adjustments
+       WHERE card_code = ? AND newapi_token_id = ?
+         AND stat_day IS NOT NULL AND voided_at IS NULL
+       GROUP BY stat_day, model`,
+    )
+    .all(cardCode, newapiTokenId) as Array<{ stat_day: string; model: string; cnt: number }>;
+
+  if (adjRows.length === 0) return rlDaily;
+
+  // 按日期合并
+  const adjByDate = new Map<string, Record<string, number>>();
+  for (const r of adjRows) {
+    const byModel = adjByDate.get(r.stat_day) || {};
+    byModel[r.model] = (byModel[r.model] || 0) + r.cnt;
+    adjByDate.set(r.stat_day, byModel);
+  }
+
+  for (const d of rlDaily) {
+    const byModel = adjByDate.get(d.date);
+    if (!byModel) continue;
+    for (const [model, cnt] of Object.entries(byModel)) {
+      d.by_model[model] = (d.by_model[model] || 0) + cnt;
+      d.total += cnt;
+    }
+  }
+  return rlDaily;
+}
+
 /** 近 N 天每日请求数(按本地 YYYY-MM-DD 分组,按日期升序返回,补零确保连续) */
 export function getDailyCountsLastNDays(
   skKey: string,
