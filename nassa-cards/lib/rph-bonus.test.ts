@@ -154,6 +154,15 @@ describe('applyRphBonus / clearRphBonus', () => {
     expect(getEffectiveRph(updated!)).toBe(555);
   });
 
+  it('DeepSeek 1d 支持自定义 RPH 加成', () => {
+    const { code } = insertTestCard('1d', 'deepseek');
+    const updated = applyRphBonus(code, 120);
+    expect(updated).not.toBeNull();
+    expect(updated!.rph_bonus).toBe(120);
+    expect(updated!.rph_bonus_reason).toBe('good_review');
+    expect(getEffectiveRph(updated!)).toBe(620);
+  });
+
   it('DeepSeek 7d 好评后 RPH 500 → 555', () => {
     const { code } = insertTestCard('7d', 'deepseek');
     const updated = applyRphBonus(code);

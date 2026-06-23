@@ -656,17 +656,13 @@ async function handle(req: NextRequest, pathParts: string[]) {
       lk === 'accept-encoding' ||
       lk === 'cookie' ||
       lk.startsWith('cf-') ||
-      lk.startsWith('x-forwarded-')
+      lk.startsWith('x-forwarded-') ||
+      lk === 'x-real-ip' ||
+      lk === 'forwarded'
     )
       continue;
     fwHeaders.set(k, v);
   }
-  // 透传客户真实 IP
-  const xff =
-    req.headers.get('x-forwarded-for') ||
-    req.headers.get('cf-connecting-ip') ||
-    req.headers.get('x-real-ip');
-  if (xff) fwHeaders.set('x-forwarded-for', xff);
 
   const init: RequestInit = {
     method: req.method,

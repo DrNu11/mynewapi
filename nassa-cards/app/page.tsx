@@ -7,7 +7,7 @@ import { PLANS } from '@/lib/plans';
 import type { Plan } from '@/lib/plans';
 import { CATEGORY_LIST } from '@/lib/categories';
 import type { CategoryMeta } from '@/lib/categories';
-import { Sparkles, KeyRound, Loader2, ShieldCheck, Zap, ShoppingCart, Film, WandSparkles } from 'lucide-react';
+import { Sparkles, KeyRound, Loader2, ShieldCheck, Zap, ShoppingCart, Film, WandSparkles, Presentation } from 'lucide-react';
 
 function planDescriptionForCategory(cat: CategoryMeta, plan: Plan): string {
   if (cat.id === 'gpt' && plan.id === '7d') {
@@ -211,6 +211,33 @@ export default function HomePage() {
 
             <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-violet-500 px-4 py-3 font-medium text-white transition group-hover:bg-violet-600">
               <WandSparkles className="h-4 w-4" />
+              立即生成
+              <span aria-hidden="true">→</span>
+            </div>
+          </Link>
+
+          {/* PPT 生成入口 */}
+          <Link
+            href="/ppt"
+            className="group flex flex-col justify-between rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur transition hover:border-cyan-500/60"
+          >
+            <div>
+              <div className="flex items-center gap-2 text-cyan-400">
+                <Presentation className="h-4 w-4" />
+                <span className="text-sm font-medium">AI PPT 生成</span>
+              </div>
+
+              <h3 className="mt-3 text-2xl font-bold text-slate-100">
+                在线生成 PPTX
+              </h3>
+
+              <p className="mt-2 text-sm text-slate-400">
+                固定请求地址，只填写 API Key，即可生成可下载的 PowerPoint 文件。
+              </p>
+            </div>
+
+            <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-3 font-medium text-slate-950 transition group-hover:bg-cyan-400">
+              <Presentation className="h-4 w-4" />
               立即生成
               <span aria-hidden="true">→</span>
             </div>

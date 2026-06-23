@@ -15,12 +15,54 @@ class ConvertRequest(BaseModel):
     export_format: ExportFormat = ExportFormat.CPA
 
 
+class SessionParseRequest(BaseModel):
+    raw_json: str = Field(..., min_length=1, max_length=300_000)
+    filename: str = ""
+
+
+class ImportResetRequest(SessionParseRequest):
+    confirm_authorized: bool = False
+
+
+class SessionSummary(BaseModel):
+    email: str
+    account_id: str
+    plan_type: str
+    expired: str
+    has_refresh_token: bool
+    has_id_token: bool
+    id_token_synthetic: bool
+
+
 class ExportResponse(BaseModel):
     export_format: ExportFormat
     filename: str
     download_data: dict[str, Any]
     auth_data: dict[str, Any] | None = None
     warnings: list[str] = Field(default_factory=list)
+
+
+class ResetAssistantStatusResponse(BaseModel):
+    import_reset_enabled: bool
+    management_configured: bool
+
+
+class ResetAssistantParseResponse(BaseModel):
+    filename: str
+    summary: SessionSummary
+    warnings: list[str] = Field(default_factory=list)
+    auth_data: dict[str, Any]
+
+
+class ImportResetResponse(BaseModel):
+    ok: bool
+    filename: str
+    summary: SessionSummary
+    upload_status: dict[str, Any]
+    auth_index: str
+    reset_status: dict[str, Any] | None = None
+    auth_file: dict[str, Any] | None = None
+    message: str
 
 
 class ConversionResult(BaseModel):

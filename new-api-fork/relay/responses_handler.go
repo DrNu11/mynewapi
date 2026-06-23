@@ -21,6 +21,16 @@ import (
 )
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	switch req := info.Request.(type) {
+	case *dto.OpenAIResponsesRequest:
+		if req.Model != "" {
+			c.Set(string(appconstant.ContextKeyClientModel), req.Model)
+		}
+	case *dto.OpenAIResponsesCompactionRequest:
+		if req.Model != "" {
+			c.Set(string(appconstant.ContextKeyClientModel), req.Model)
+		}
+	}
 	info.InitChannelMeta(c)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		switch info.ApiType {
@@ -59,7 +69,6 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	if err != nil {
 		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
-
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())

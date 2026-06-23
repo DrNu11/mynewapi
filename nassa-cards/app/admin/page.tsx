@@ -93,6 +93,7 @@ export default function AdminDashboard() {
   const [copiedRow, setCopiedRow] = useState<number | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [bonusId, setBonusId] = useState<number | null>(null);
+  const [rphBonusInputs, setRphBonusInputs] = useState<Record<number, string>>({});
   const [tab, setTab] = useState<'cards' | 'invites'>('cards');
 
   useEffect(() => {
@@ -472,21 +473,41 @@ ${modelsList}
     }
   }
 
-  async function rphBonusAction(card: CardRow, action: 'apply_rph_bonus' | 'clear_rph_bonus') {
-    const label = action === 'apply_rph_bonus' ? '好评 +55' : '撤销加成';
-    if (action === 'apply_rph_bonus' && !confirm(`确定为 ${card.code} 应用好评奖励 +55 RPH?`)) return;
+  function rphBonusDraft(card: CardRow): string {
+    return rphBonusInputs[card.id] ?? String(card.rph_bonus > 0 ? card.rph_bonus : 55);
+  }
+
+  async function rphBonusAction(card: CardRow, action: 'apply_rph_bonus' | 'clear_rph_bonus', overrideAmount?: number) {
+    let amount: number | undefined;
+    if (action === 'apply_rph_bonus') {
+      const raw = overrideAmount === undefined ? rphBonusDraft(card).trim() : String(overrideAmount);
+      amount = Number(raw);
+      if (!/^\d+$/.test(raw) || !Number.isInteger(amount) || amount < 1 || amount > 100000) {
+        alert('RPH 加成必须是 1-100000 的整数');
+        return;
+      }
+    }
+
+    const label = action === 'apply_rph_bonus' ? `RPH +${amount}` : '撤销加成';
+    if (action === 'apply_rph_bonus' && !confirm(`确定为 ${card.code} 设置每小时 RPH 加成 +${amount}?\n\n当前小时上限: ${card.rph} → ${card.rph + (amount || 0)}`)) return;
     if (action === 'clear_rph_bonus' && !confirm(`确定撤销 ${card.code} 的 RPH 加成?`)) return;
     setBonusId(card.id);
     try {
       const res = await fetch(`/api/admin/cards/${encodeURIComponent(card.code)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({
+          action,
+          ...(amount !== undefined ? { rph_bonus_amount: amount } : {}),
+        }),
       });
       const body = await res.json();
       if (!body.success) {
         alert(`${label}失败: ${body.message}`);
       } else {
+        if (amount !== undefined) {
+          setRphBonusInputs((prev) => ({ ...prev, [card.id]: String(amount) }));
+        }
         await load();
       }
     } catch (e: any) {
@@ -1003,15 +1024,41 @@ ${modelsList}
                         )}
                         {/* RPH 加成按钮: 当前仅 deepseek 1d/7d/30d */}
                         {c.category === 'deepseek' && ['1d', '7d', '30d'].includes(c.plan) && c.status !== 'expired' && c.status !== 'disabled' && (
-                          c.rph_bonus > 0 ? (
-                            <>
-                              <button
-                                disabled
-                                className="flex items-center gap-1 rounded border border-amber-500/40 px-2 py-1 text-xs text-amber-300"
-                              >
+                          <>
+                            {c.rph_bonus > 0 && (
+                              <span className="flex items-center gap-1 rounded border border-amber-500/40 px-2 py-1 text-xs text-amber-300">
                                 <ThumbsUp className="h-3 w-3" />
-                                已加成 +55
+                                已 +{c.rph_bonus}
+                              </span>
+                            )}
+                            <div className="flex items-center gap-1 rounded border border-amber-500/40 px-1.5 py-1 text-xs text-amber-300">
+                              <span className="text-amber-400">+</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={100000}
+                                step={1}
+                                value={rphBonusDraft(c)}
+                                onChange={(e) => setRphBonusInputs((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                                disabled={bonusId === c.id}
+                                title="自定义每小时 RPH 加成"
+                                className="w-16 rounded bg-slate-950 px-1 py-0.5 font-mono text-xs text-amber-100 outline-none ring-1 ring-amber-500/30 focus:ring-amber-400 disabled:opacity-50"
+                              />
+                              <button
+                                onClick={() => rphBonusAction(c, 'apply_rph_bonus')}
+                                disabled={bonusId === c.id}
+                                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
+                                title="应用自定义每小时 RPH 加成"
+                              >
+                                {bonusId === c.id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <ThumbsUp className="h-3 w-3" />
+                                )}
+                                {c.rph_bonus > 0 ? '更新' : '应用'}
                               </button>
+                            </div>
+                            {c.rph_bonus > 0 && (
                               <button
                                 onClick={() => rphBonusAction(c, 'clear_rph_bonus')}
                                 disabled={bonusId === c.id}
@@ -1022,14 +1069,14 @@ ${modelsList}
                                 ) : (
                                   <RotateCcw className="h-3 w-3" />
                                 )}
-                                撤销加成
+                                撤销
                               </button>
-                            </>
-                          ) : (
+                            )}
                             <button
-                              onClick={() => rphBonusAction(c, 'apply_rph_bonus')}
+                              onClick={() => rphBonusAction(c, 'apply_rph_bonus', 55)}
                               disabled={bonusId === c.id}
                               className="flex items-center gap-1 rounded border border-amber-500/40 px-2 py-1 text-xs text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
+                              title="快速设置为默认好评 +55"
                             >
                               {bonusId === c.id ? (
                                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -1038,7 +1085,7 @@ ${modelsList}
                               )}
                               好评 +55
                             </button>
-                          )
+                          </>
                         )}
                         {/* GLM 请求额度奖励: 仅 GLM-5.2 日卡,好评 +500 次 */}
                         {c.category === 'glm' && c.plan === '1d' && c.status !== 'expired' && c.status !== 'disabled' && (

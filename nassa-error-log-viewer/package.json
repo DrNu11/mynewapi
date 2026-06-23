@@ -1,0 +1,12 @@
+{
+  "name": "nassa-error-log-viewer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NassaAPI customer error raw log viewer",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

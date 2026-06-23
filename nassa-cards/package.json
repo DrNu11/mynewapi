@@ -10,6 +10,9 @@
     "gen-cards": "tsx scripts/gen-cards.ts",
     "card-admin": "tsx scripts/card-admin-cli.ts",
     "alert": "tsx scripts/alert-cli.ts",
+    "audit-newapi-token-sync": "tsx scripts/audit-newapi-token-sync.ts",
+    "fix-newapi-token-allow-ips": "tsx scripts/fix-newapi-token-allow-ips.ts",
+    "backfill-newapi-bypass-usage": "tsx scripts/backfill-newapi-bypass-usage.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -19,6 +22,7 @@
     "lucide-react": "^0.453.0",
     "mysql2": "^3.22.4",
     "next": "14.2.13",
+    "pptxgenjs": "^4.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

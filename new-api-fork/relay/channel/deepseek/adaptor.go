@@ -84,6 +84,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
+	sanitizeDeepSeekOpenAIRequest(request)
 	if err := applyDeepSeekV4OpenAIThinkingSuffix(info, request); err != nil {
 		return nil, err
 	}
@@ -159,8 +160,15 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	// TODO implement me
-	return nil, errors.New("not implemented")
+	chatRequest, err := deepSeekResponsesRequestToChatRequest(info, request)
+	if err != nil {
+		return nil, err
+	}
+	sanitizeDeepSeekOpenAIRequest(chatRequest)
+	if err := applyDeepSeekV4OpenAIThinkingSuffix(info, chatRequest); err != nil {
+		return nil, err
+	}
+	return chatRequest, nil
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
@@ -173,6 +181,18 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		adaptor := claude.Adaptor{}
 		return adaptor.DoResponse(c, resp, info)
 	default:
+		if info.RelayMode == constant.RelayModeResponses {
+			if info.IsStream {
+				return deepSeekChatStreamToResponsesHandler(c, info, resp)
+			}
+			return deepSeekChatToResponsesHandler(c, info, resp)
+		}
+		if info.RelayMode == constant.RelayModeChatCompletions {
+			if info.IsStream {
+				return deepSeekChatStreamToClientHandler(c, info, resp)
+			}
+			return deepSeekChatToClientHandler(c, info, resp)
+		}
 		adaptor := openai.Adaptor{}
 		return adaptor.DoResponse(c, resp, info)
 	}

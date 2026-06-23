@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NassaAPI 模型价格控制台</title>
+  <link rel="stylesheet" href="/styles.css?v=20260621-card-session" />
+</head>
+<body>
+  <section id="loginView" class="login-view" hidden>
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-mark">N</div>
+        <div>
+          <div class="eyebrow">NASSAAPI PRICING</div>
+          <h1>模型价格控制台</h1>
+        </div>
+      </div>
+      <form id="loginForm" class="login-form">
+        <label>
+          <span>账号</span>
+          <input id="loginUsername" name="username" autocomplete="username" value="admin" readonly />
+        </label>
+        <label>
+          <span>密码</span>
+          <input id="loginPassword" name="password" autocomplete="current-password" type="password" placeholder="输入密码" autofocus />
+        </label>
+        <button id="loginSubmit" class="button primary" type="submit">登录</button>
+      </form>
+      <div id="loginError" class="login-error" hidden></div>
+    </div>
+  </section>
+
+  <div id="appShell" class="shell" hidden>
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">NASSAAPI PRICING</div>
+        <h1>模型价格控制台</h1>
+      </div>
+      <div class="top-actions">
+        <span id="userPill" class="status-pill" hidden></span>
+        <span id="syncStatus" class="status-pill">连接中</span>
+        <button id="refreshBtn" class="button primary" type="button">刷新</button>
+        <button id="logoutBtn" class="button ghost" type="button">退出</button>
+      </div>
+    </header>
+
+    <section class="stats" aria-label="pricing stats">
+      <div class="stat">
+        <span>启用模型</span>
+        <strong id="statEnabled">-</strong>
+      </div>
+      <div class="stat">
+        <span>已定价/实时</span>
+        <strong id="statConfigured">-</strong>
+      </div>
+      <div class="stat warn">
+        <span>未定价</span>
+        <strong id="statUnpriced">-</strong>
+      </div>
+      <div class="stat">
+        <span>分组倍率</span>
+        <strong id="statGroups">-</strong>
+      </div>
+    </section>
+
+    <section class="quick-panel">
+      <form id="modelForm" class="quick-grid">
+        <label>
+          <span>模型</span>
+          <input id="modelName" list="modelList" autocomplete="off" placeholder="model name" />
+          <datalist id="modelList"></datalist>
+        </label>
+        <label>
+          <span>类型</span>
+          <select id="pricingType">
+            <option value="ratio">倍率</option>
+            <option value="fixed">固定价格</option>
+          </select>
+        </label>
+        <label>
+          <span>固定价/倍率数值</span>
+          <input id="pricingValue" inputmode="decimal" placeholder="0.6" />
+        </label>
+        <button id="quickSaveModel" class="button primary" type="submit">保存模型</button>
+        <button id="quickEnableModel" class="button enable" type="button">启用模型</button>
+        <button id="quickDeleteModel" class="button danger soft-danger" type="button">删除价格配置</button>
+        <button id="quickDisableModel" class="button danger" type="button">禁用模型</button>
+      </form>
+    </section>
+
+    <nav class="tabs" aria-label="pricing views">
+      <button class="tab active" data-tab="models" type="button">全部模型</button>
+      <button class="tab" data-tab="unpriced" type="button">未定价模型</button>
+      <button class="tab" data-tab="groups" type="button">分组倍率</button>
+      <button class="tab" data-tab="deletedHistory" type="button">删除历史</button>
+      <button class="tab" data-tab="backups" type="button">备份回滚</button>
+    </nav>
+
+    <section class="toolbar">
+      <input id="searchInput" placeholder="搜索模型或分组" />
+      <span id="updatedAt" class="muted">未加载</span>
+    </section>
+
+    <main id="content" class="content" aria-live="polite"></main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/app.js?v=20260621-card-session"></script>
+</body>
+</html>

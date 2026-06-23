@@ -9,30 +9,26 @@ def test_home_page_renders_dual_export_actions() -> None:
     text = response.text
 
     assert response.status_code == 200
-    assert "OpenAI / Codex JSON 导出" in text
-    assert "支持 session -> CPA 与 session -> sub2api" in text
-    assert "生成后可下载 CPA 或 sub2api JSON 文件。" in text
-    assert "codex-&lt;email&gt;-&lt;plan_type&gt;-cpa.json" in text
-    assert "codex-&lt;email&gt;-&lt;plan_type&gt;-sub2api.json" in text
-    assert "自动补上 -cpa 或 -sub2api" in text
-    assert 'id="convertForm"' in text
-    assert "https://chatgpt.com/api/auth/session" in text
+    assert "Codex 额度助手" in text
+    assert "额度重置" in text
+    assert 'id="sessionForm"' in text
     assert 'id="rawJson"' in text
     assert 'id="fileName"' in text
-    assert 'id="generateCpaBtn"' in text
-    assert 'class="generate-btn generate-btn-cpa"' in text
-    assert 'id="generateSub2apiBtn"' in text
-    assert 'class="generate-btn generate-btn-sub2api"' in text
-    assert 'id="errorBox"' in text
-    assert 'id="statusPill"' in text
-    assert 'id="resultPanelActions"' in text
-    assert 'id="summary"' in text
-    assert 'id="warnings"' in text
+    assert 'id="confirmAuthorized"' in text
+    assert 'id="parseBtn"' in text
     assert 'id="downloadBtn"' in text
+    assert 'id="importResetBtn"' in text
+    assert "导入并重置" in text
+    assert "https://chatgpt.com/api/auth/session" in text
+    assert 'id="warnings"' in text
     assert 'disabled' in text
-    assert 'id="copyNameBtn"' in text
-    assert "复制文件名" in text
-    assert "操作" not in text
-    assert "下载与复制" not in text
-    assert 'href="/static/styles.css"' in text
-    assert 'src="/static/app.js"' in text
+    assert 'href="static/reset-assistant.css"' in text
+    assert 'src="static/reset-assistant.js"' in text
+
+
+def test_reset_assistant_alias_renders_home() -> None:
+    client = TestClient(app)
+    response = client.get("/reset-assistant/")
+
+    assert response.status_code == 200
+    assert "Codex 额度助手" in response.text

@@ -19,6 +19,9 @@ import {
   getTopModelsLastNDays,
   getEffectiveRph,
   getGlmRequestUsage,
+  getDeepSeekLightWeightedUsage,
+  getMergedTotalRequestStats,
+  getMergedDailyCountsLastNDays,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -68,9 +71,21 @@ export async function POST(req: NextRequest) {
   const modelsUsed = getModelsUsedCurrentHour(sk);
   const requestUsage = getGlmRequestUsage(card);
 
+  // DeepSeek 轻度月卡加权点数统计
+  const isDeepSeekLight =
+    card.category === 'deepseek' && card.plan === '30d_light';
+  const weighted = isDeepSeekLight
+    ? getDeepSeekLightWeightedUsage(card)
+    : null;
+
   // 扩展看板统计:总览、近 7 天趋势、7 天模型 top
-  const totalStats = getTotalRequestStats(sk);
-  const daily7d = getDailyCountsLastNDays(sk, 7);
+  // 30d_light 合并 request_logs + card_usage_adjustments
+  const totalStats = isDeepSeekLight
+    ? getMergedTotalRequestStats(sk, card.code, card.newapi_token_id ?? null)
+    : getTotalRequestStats(sk);
+  const daily7d = isDeepSeekLight
+    ? getMergedDailyCountsLastNDays(sk, card.code, card.newapi_token_id ?? null, 7)
+    : getDailyCountsLastNDays(sk, 7);
   const dailyByModel7d = getDailyCountsByModelLastNDays(sk, 7);
   const topModels7d = getTopModelsLastNDays(sk, 7, 5);
   const successRate =
@@ -106,6 +121,8 @@ export async function POST(req: NextRequest) {
       daily_7d: daily7d, // [{date: '2026-05-10', count: 1234}, ...]
       daily_by_model_7d: dailyByModel7d, // [{date, total, by_model: {model: count}}, ...] 供堆叠柱状图
       top_models_7d: topModels7d, // [{model, count}, ...] top 5
+      // DeepSeek 轻度月卡加权点数(30d_light 专有, 其他套餐为 null)
+      weightedPoints: weighted,
     },
   });
 }

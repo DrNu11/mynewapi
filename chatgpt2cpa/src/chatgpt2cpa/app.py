@@ -9,11 +9,22 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .converter import build_codex_auth_json
+from .reset_assistant import (
+    import_cpa_and_reset,
+    import_reset_enabled,
+    management_configured,
+    parse_session_to_cpa,
+)
 from .schemas import (
     ConvertRequest,
     ErrorResponse,
     ExportFormat,
     ExportResponse,
+    ImportResetRequest,
+    ImportResetResponse,
+    ResetAssistantParseResponse,
+    ResetAssistantStatusResponse,
+    SessionParseRequest,
 )
 from .sub2api_converter import build_sub2api_json
 
@@ -56,6 +67,17 @@ def save_result_file(filename: str, data: dict[str, Any]) -> None:
 
 
 @app.get("/", response_class=HTMLResponse)
+def reset_assistant_index(request: Request) -> HTMLResponse:
+    return TEMPLATES.TemplateResponse(request=request, name="reset_assistant.html")
+
+
+@app.get("/reset-assistant", response_class=HTMLResponse)
+@app.get("/reset-assistant/", response_class=HTMLResponse)
+def reset_assistant_alias(request: Request) -> HTMLResponse:
+    return TEMPLATES.TemplateResponse(request=request, name="reset_assistant.html")
+
+
+@app.get("/plus", response_class=HTMLResponse)
 def plus_index(request: Request) -> HTMLResponse:
     return TEMPLATES.TemplateResponse(request=request, name="plus.html")
 
@@ -103,4 +125,65 @@ def convert(payload: ConvertRequest) -> ExportResponse:
         download_data=result.auth_data,
         auth_data=result.auth_data,
         warnings=result.warnings,
+    )
+
+
+@app.get("/api/reset-assistant/status", response_model=ResetAssistantStatusResponse)
+def reset_assistant_status() -> ResetAssistantStatusResponse:
+    return ResetAssistantStatusResponse(
+        import_reset_enabled=import_reset_enabled(),
+        management_configured=management_configured(),
+    )
+
+
+@app.post(
+    "/api/reset-assistant/parse",
+    response_model=ResetAssistantParseResponse,
+    responses={400: {"model": ErrorResponse}},
+)
+def reset_assistant_parse(payload: SessionParseRequest) -> ResetAssistantParseResponse:
+    filename, auth_data, summary, warnings = parse_session_to_cpa(payload.raw_json, payload.filename)
+    return ResetAssistantParseResponse(
+        filename=filename,
+        summary=summary,
+        warnings=warnings,
+        auth_data=auth_data,
+    )
+
+
+@app.post(
+    "/api/reset-assistant/import-reset",
+    response_model=ImportResetResponse,
+    responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+def reset_assistant_import_reset(payload: ImportResetRequest) -> ImportResetResponse:
+    if not payload.confirm_authorized:
+        raise HTTPException(status_code=400, detail="必须确认已获得客户授权。")
+    if not import_reset_enabled():
+        raise HTTPException(status_code=503, detail="服务器未启用 CPA 导入/重置。")
+
+    filename, auth_data, summary, warnings = parse_session_to_cpa(payload.raw_json, payload.filename)
+    upload_status, auth_index, auth_file, reset_status = import_cpa_and_reset(filename, auth_data)
+
+    message = "已导入 CPA auth 文件并调用 reset-quota。"
+    ok = bool(auth_index and reset_status)
+    if auth_file is None:
+        message = "已上传 auth 文件，但没有在 auth-files 列表中匹配到运行时凭证。"
+    elif not auth_index:
+        message = "已上传 auth 文件，但该凭证暂时没有 auth_index，无法调用 reset-quota。"
+    elif reset_status is None:
+        message = "已匹配 auth_index，但 reset-quota 没有返回结果。"
+
+    if warnings:
+        message = f"{message} 注意：{'；'.join(warnings)}"
+
+    return ImportResetResponse(
+        ok=ok,
+        filename=filename,
+        summary=summary,
+        upload_status=upload_status,
+        auth_index=auth_index,
+        reset_status=reset_status,
+        auth_file=auth_file,
+        message=message,
     )

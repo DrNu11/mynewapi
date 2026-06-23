@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex 额度助手</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="static/reset-assistant.css">
+</head>
+<body>
+  <main class="app-shell">
+    <aside class="side-panel">
+      <div class="brand">
+        <span class="brand-mark">C</span>
+        <div>
+          <strong>Codex 额度助手</strong>
+          <span id="serviceState">检测中</span>
+        </div>
+      </div>
+
+      <form id="sessionForm" class="session-form">
+        <label for="rawJson">Session JSON</label>
+        <textarea id="rawJson" name="rawJson" spellcheck="false" autocomplete="off" required></textarea>
+
+        <label for="fileName">文件名</label>
+        <input id="fileName" name="fileName" type="text" placeholder="codex-user-plus">
+
+        <label class="consent-row">
+          <input id="confirmAuthorized" type="checkbox">
+          <span>客户已授权导入 CPA 池并清除运行时限额状态</span>
+        </label>
+
+        <div class="button-row">
+          <button id="parseBtn" type="submit">解析</button>
+          <button id="downloadBtn" type="button" disabled>下载 CPA</button>
+        </div>
+        <button id="importResetBtn" class="primary-action" type="button" disabled>导入并重置</button>
+      </form>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-header">
+        <div>
+          <p class="eyebrow">Account Runtime</p>
+          <h1>额度重置</h1>
+        </div>
+        <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener">打开 session</a>
+      </header>
+
+      <section class="status-grid" aria-label="账号摘要">
+        <div class="metric">
+          <span>邮箱</span>
+          <strong id="emailValue">-</strong>
+        </div>
+        <div class="metric">
+          <span>套餐</span>
+          <strong id="planValue">-</strong>
+        </div>
+        <div class="metric">
+          <span>账号</span>
+          <strong id="accountValue">-</strong>
+        </div>
+        <div class="metric">
+          <span>过期</span>
+          <strong id="expiredValue">-</strong>
+        </div>
+      </section>
+
+      <section class="result-band">
+        <div class="result-head">
+          <div>
+            <p class="eyebrow">Result</p>
+            <h2 id="resultTitle">等待解析</h2>
+          </div>
+          <span id="resultBadge">idle</span>
+        </div>
+        <div id="warnings" class="warnings" hidden></div>
+        <pre id="resultText">粘贴 session 后点击解析。</pre>
+      </section>
+    </section>
+  </main>
+  <script src="static/reset-assistant.js"></script>
+</body>
+</html>

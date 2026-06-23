@@ -1,0 +1,17 @@
+services:
+  pricing-admin:
+    build: .
+    container_name: pricing-admin
+    restart: unless-stopped
+    ports:
+      - "3102:3102"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    networks:
+      - newapi-prod-net
+
+networks:
+  newapi-prod-net:
+    external: true

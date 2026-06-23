@@ -61,6 +61,23 @@ function init(inst: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_rl_sk_ts ON request_logs(sk_key, ts);
     CREATE INDEX IF NOT EXISTS idx_rl_card_ts ON request_logs(card_id, ts);
 
+    CREATE TABLE IF NOT EXISTS card_usage_adjustments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      card_code TEXT NOT NULL,
+      newapi_token_id INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'newapi_bypass_backfill',
+      model TEXT,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      weighted_points INTEGER NOT NULL DEFAULT 0,
+      original_started_at INTEGER NOT NULL,
+      original_ended_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      reason TEXT,
+      external_batch_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cua_card ON card_usage_adjustments(card_code, newapi_token_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cua_batch ON card_usage_adjustments(card_code, newapi_token_id, model, source, original_started_at, original_ended_at, external_batch_id);
+
     CREATE TABLE IF NOT EXISTS admin_sessions (
       id TEXT PRIMARY KEY,
       created_at INTEGER NOT NULL,
@@ -1161,10 +1178,11 @@ export function countCurrentHourRequestsByCard(cardId: number): {
   return { used: row.c, hourStart, nextResetAt };
 }
 
-/** DeepSeek 轻度月卡模型消耗权重：flash=1点, pro=3点 */
+/** DeepSeek 轻度月卡模型消耗权重：flash=1点, pro=3点, 别名 DeepSeek=1点 */
 export function getDeepSeekLightRequestWeight(model: string | null): number {
-  if (model === 'deepseek-v4-pro') return 3;
-  if (model === 'deepseek-v4-flash') return 1;
+  const m = (model || '').trim();
+  if (m === 'deepseek-v4-pro') return 3;
+  if (m === 'deepseek-v4-flash' || m === 'DeepSeek') return 1;
   return 1; // 未知/其他 deepseek 模型默认 1
 }
 
@@ -1182,6 +1200,69 @@ export function countCardWeightedPoints(cardId: number, sinceSec: number): numbe
     )
     .get(cardId, sinceSec) as { total: number | null };
   return row.total ?? 0;
+}
+
+/** DeepSeek 轻度月卡点数配额 */
+export const DS_LIGHT_QUOTA_24H = 2000;
+export const DS_LIGHT_QUOTA_7D = 10000;
+export const DS_LIGHT_QUOTA_TOTAL = 40000;
+
+/** DeepSeek 轻度月卡加权点数统计(从 request_logs + card_usage_adjustments 合并读取) */
+export function getDeepSeekLightWeightedUsage(card: {
+  id: number;
+  activated_at: number | null;
+  code?: string;
+  newapi_token_id?: number | null;
+}): {
+  weightedPoints24h: number;
+  weightedPoints7d: number;
+  weightedPointsTotal: number;
+  weightedQuota24h: number;
+  weightedQuota7d: number;
+  weightedQuotaTotal: number;
+} {
+  const now = Math.floor(Date.now() / 1000);
+  const since24h = now - 86400;
+  const since7d = now - 7 * 86400;
+  const sinceActivation = card.activated_at ?? now;
+  const rl24h = countCardWeightedPoints(card.id, since24h);
+  const rl7d = countCardWeightedPoints(card.id, since7d);
+  const rlTotal = countCardWeightedPoints(card.id, sinceActivation);
+
+  // 合并补账点数: 按原始时间窗口 (original_started_at) 归入 24h / 7d / total
+  let adj24h = 0;
+  let adj7d = 0;
+  let adjTotal = 0;
+  if (card.code && card.newapi_token_id) {
+    const adjustments = db()
+      .prepare(
+        `SELECT weighted_points, original_started_at, original_ended_at
+         FROM card_usage_adjustments
+         WHERE card_code = ? AND newapi_token_id = ?`,
+      )
+      .all(card.code, card.newapi_token_id) as Array<{
+        weighted_points: number;
+        original_started_at: number;
+        original_ended_at: number;
+      }>;
+    for (const adj of adjustments) {
+      // 补账窗口落在 24h 内
+      if (adj.original_ended_at >= since24h) adj24h += adj.weighted_points;
+      // 补账窗口落在 7d 内
+      if (adj.original_ended_at >= since7d) adj7d += adj.weighted_points;
+      // 补账窗口落在激活后
+      if (adj.original_ended_at >= sinceActivation) adjTotal += adj.weighted_points;
+    }
+  }
+
+  return {
+    weightedPoints24h: rl24h + adj24h,
+    weightedPoints7d: rl7d + adj7d,
+    weightedPointsTotal: rlTotal + adjTotal,
+    weightedQuota24h: DS_LIGHT_QUOTA_24H,
+    weightedQuota7d: DS_LIGHT_QUOTA_7D,
+    weightedQuotaTotal: DS_LIGHT_QUOTA_TOTAL,
+  };
 }
 
 export const GLM_BASE_REQUEST_QUOTA = 500;
@@ -1294,9 +1375,11 @@ export function getEffectiveRph(card: { category: string | null; plan: string; r
   return base + Number(card.rph_bonus || 0);
 }
 
-/** 应用 RPH 加成(amount 目前固定 55,reason 目前固定 good_review) */
-export function applyRphBonus(code: string): Card | null {
+/** 应用 RPH 加成。默认好评 +55,后台可传自定义每小时加成值。 */
+export function applyRphBonus(code: string, amount = 55): Card | null {
   const now = Math.floor(Date.now() / 1000);
+  const bonus = Math.trunc(Number(amount));
+  if (!Number.isFinite(bonus) || bonus < 1) return null;
   const card = getCardByCode(code);
   if (!card) return null;
   if (!isRphBonusEligible(card)) return null;
@@ -1305,12 +1388,12 @@ export function applyRphBonus(code: string): Card | null {
   // 最小 id 的那张，所以加成必须同步到所有共享该 token 的卡，否则代理侧读不到。
   if (card.newapi_token_key) {
     db().prepare(
-      'UPDATE cards SET rph_bonus = 55, rph_bonus_reason = ?, rph_bonus_at = ? WHERE newapi_token_key = ?'
-    ).run('good_review', now, card.newapi_token_key);
+      'UPDATE cards SET rph_bonus = ?, rph_bonus_reason = ?, rph_bonus_at = ? WHERE newapi_token_key = ?'
+    ).run(bonus, 'good_review', now, card.newapi_token_key);
   } else {
     db().prepare(
-      'UPDATE cards SET rph_bonus = 55, rph_bonus_reason = ?, rph_bonus_at = ? WHERE code = ?'
-    ).run('good_review', now, code);
+      'UPDATE cards SET rph_bonus = ?, rph_bonus_reason = ?, rph_bonus_at = ? WHERE code = ?'
+    ).run(bonus, 'good_review', now, code);
   }
   return getCardByCode(code);
 }
@@ -1400,6 +1483,82 @@ export function getTotalRequestStats(skKey: string): {
     success: row.success || 0,
     failed: row.failed || 0,
   };
+}
+
+/** 查询 card_usage_adjustments 的合并统计 (用于 request_logs 补账) */
+function getAdjustmentStats(
+  cardCode: string,
+  newapiTokenId: number | null,
+): { total: number; byStartDate: Map<string, number> } {
+  const total = { total: 0 };
+  const byStartDate = new Map<string, number>();
+  if (!newapiTokenId) return { total: 0, byStartDate };
+  const rows = db()
+    .prepare(
+      `SELECT request_count, original_started_at, original_ended_at
+       FROM card_usage_adjustments
+       WHERE card_code = ? AND newapi_token_id = ?`,
+    )
+    .all(cardCode, newapiTokenId) as Array<{
+    request_count: number;
+    original_started_at: number;
+    original_ended_at: number;
+  }>;
+  for (const r of rows) {
+    total.total += r.request_count;
+    // 按原始时间窗口跨度的日历天数均匀分摊到每天
+    const startDay = new Date(r.original_started_at * 1000);
+    const endDay = new Date(r.original_ended_at * 1000);
+    // 计算跨越的本地日期数(至少 1 天)
+    const startDate = new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate());
+    const endDate = new Date(endDay.getFullYear(), endDay.getMonth(), endDay.getDate());
+    const spanDays = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
+    const perDay = Math.floor(r.request_count / spanDays);
+    let remainder = r.request_count - perDay * spanDays;
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const key = `${y}-${m}-${day}`;
+      let count = perDay;
+      if (remainder > 0) { count++; remainder--; }
+      byStartDate.set(key, (byStartDate.get(key) || 0) + count);
+    }
+  }
+  return { total: total.total, byStartDate };
+}
+
+/** 合并 request_logs + card_usage_adjustments 的累计统计(30d_light 用) */
+export function getMergedTotalRequestStats(
+  skKey: string,
+  cardCode: string,
+  newapiTokenId: number | null,
+): { total: number; success: number; failed: number } {
+  const rl = getTotalRequestStats(skKey);
+  const adj = getAdjustmentStats(cardCode, newapiTokenId);
+  return {
+    total: rl.total + adj.total,
+    success: rl.success + adj.total, // 补账记录默认视为成功
+    failed: rl.failed,
+  };
+}
+
+/** 合并 request_logs + card_usage_adjustments 的近 N 天每日请求数 */
+export function getMergedDailyCountsLastNDays(
+  skKey: string,
+  cardCode: string,
+  newapiTokenId: number | null,
+  days: number,
+): Array<{ date: string; count: number }> {
+  const rlDaily = getDailyCountsLastNDays(skKey, days);
+  const adj = getAdjustmentStats(cardCode, newapiTokenId);
+  if (adj.total === 0) return rlDaily;
+  // 合并: 把 adj 的每日数量加到对应日期上
+  for (const d of rlDaily) {
+    const adjCount = adj.byStartDate.get(d.date) || 0;
+    d.count += adjCount;
+  }
+  return rlDaily;
 }
 
 /** 近 N 天每日请求数(按本地 YYYY-MM-DD 分组,按日期升序返回,补零确保连续) */
