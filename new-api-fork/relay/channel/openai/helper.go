@@ -370,8 +370,12 @@ func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 					data = string(out)
 				}
 			}
+			// Mask upstream model name (e.g. MiniMax-M3) with origin model name (e.g. glm-5.2).
+			// Always run (not just when changed) because message_start always carries the model.
+			if info.IsModelMapped && info.OriginModelName != "" && info.UpstreamModelName != "" {
+				data = strings.ReplaceAll(data, info.UpstreamModelName, info.OriginModelName)
+			}
 		}
-	}
 
 	var streamResponse dto.ChatCompletionsStreamResponse
 	if err := common.Unmarshal(common.StringToByteSlice(data), &streamResponse); err != nil {
