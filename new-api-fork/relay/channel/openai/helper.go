@@ -74,6 +74,17 @@ func sanitizeMappedProviderChatStreamData(data string, info *relaycommon.RelayIn
 			streamResponse.Choices[i].Delta.Reasoning = nil
 			changed = true
 		}
+		// Strip <think> from tool_calls function arguments (streaming)
+		for j, tc := range streamResponse.Choices[i].Delta.ToolCalls {
+			if tc.Function.Arguments != "" {
+				cleaned := stripProviderThinkingBlocks(tc.Function.Arguments)
+				if cleaned != tc.Function.Arguments {
+					streamResponse.Choices[i].Delta.ToolCalls[j].Function.Arguments = cleaned
+					streamResponse.Choices[i].Delta.ToolCalls[j].Function.Name = stripProviderThinkingBlocks(tc.Function.Name)
+					changed = true
+				}
+			}
+		}
 	}
 	if !changed {
 		return data
@@ -120,6 +131,13 @@ func sanitizeMappedProviderTextResponse(response *dto.OpenAITextResponse, info *
 		response.Choices[i].Message.ReasoningContent = nil
 		response.Choices[i].Message.Reasoning = nil
 		response.Choices[i].Message.Name = nil
+		// Strip <think> from tool_calls function arguments (non-streaming)
+		for _, tc := range response.Choices[i].Message.ParseToolCalls() {
+			if tc.Function.Arguments != "" {
+				tc.Function.Arguments = stripProviderThinkingBlocks(tc.Function.Arguments)
+				tc.Function.Name = stripProviderThinkingBlocks(tc.Function.Name)
+			}
+		}
 	}
 }
 
@@ -198,36 +216,73 @@ func providerAliasForOrigin(origin string) string {
 
 func stripProviderThinkingBlocks(text string) string {
 	text = stripDelimitedCI(text, "<think>", "</think>")
-	text = stripDelimitedCI(text, `\u003cthink\u003e`, `\u003c/think\u003e`)
+	text = stripDelimitedCI(text, "\x3cthink\x3e", "\x3c/think\x3e")
 	return text
+}
+
+// partialSuffixLen returns the longest suffix of text that matches the beginning of token.
+func partialSuffixLen(text, token string) int {
+	for n := len(token) - 1; n > 0; n-- {
+		if len(text) >= n && indexFold(text[len(text)-n:], token[:n]) == 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 func stripProviderThinkingFromStream(text string, info *relaycommon.RelayInfo) string {
 	if info == nil {
 		return stripProviderThinkingBlocks(text)
 	}
+
+	tc := &info.ThinkingContentInfo
+
+	// Restore buffered partial tag fragments from previous chunk.
+	if tc.PartialOpenTagBuf != "" {
+		text = tc.PartialOpenTagBuf + text
+		tc.PartialOpenTagBuf = ""
+	}
+	if tc.PartialCloseTagBuf != "" {
+		text = tc.PartialCloseTagBuf + text
+		tc.PartialCloseTagBuf = ""
+	}
+
 	var out strings.Builder
 	rest := text
 	for rest != "" {
-		if info.ThinkingContentInfo.DropProviderThinking {
+		if tc.DropProviderThinking {
 			end := indexFold(rest, "</think>")
 			if end < 0 {
+				// close tag may be split across chunks — save tail as buffer
+				if pl := partialSuffixLen(rest, "</think>"); pl > 0 {
+					tc.PartialCloseTagBuf = rest[len(rest)-pl:]
+					rest = ""
+				}
 				return out.String()
 			}
 			rest = rest[end+len("</think>"):]
-			info.ThinkingContentInfo.DropProviderThinking = false
+			tc.DropProviderThinking = false
 			continue
 		}
 		start := indexFold(rest, "<think>")
 		if start < 0 {
-			out.WriteString(rest)
+			// open tag may be split across chunks — save tail as buffer
+			if pl := partialSuffixLen(rest, "<think>"); pl > 0 {
+				out.WriteString(rest[:len(rest)-pl])
+				tc.PartialOpenTagBuf = rest[len(rest)-pl:]
+			} else {
+				out.WriteString(rest)
+			}
 			break
 		}
 		out.WriteString(rest[:start])
 		rest = rest[start+len("<think>"):]
 		end := indexFold(rest, "</think>")
 		if end < 0 {
-			info.ThinkingContentInfo.DropProviderThinking = true
+			tc.DropProviderThinking = true
+			if pl := partialSuffixLen(rest, "</think>"); pl > 0 {
+				tc.PartialCloseTagBuf = rest[len(rest)-pl:]
+			}
 			break
 		}
 		rest = rest[end+len("</think>"):]
@@ -289,6 +344,35 @@ func maskGPTIdentityInData(data string, info *relaycommon.RelayInfo) string {
 }
 
 func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo) error {
+	// 在 Open→Claude 转换前先 strip provider thinking，与 OpenAI Chat Completions 流式路径保持一致。
+	// 使用 stateful stripProviderThinkingFromStream，支持跨 SSE chunk 的 <think>…</think>。
+	if isMappedMiniMaxUpstream(info) {
+		var streamResponse dto.ChatCompletionsStreamResponse
+		if err := common.UnmarshalJsonStr(data, &streamResponse); err == nil {
+			changed := false
+			for i := range streamResponse.Choices {
+				content := streamResponse.Choices[i].Delta.GetContentString()
+				if content != "" {
+					streamResponse.Choices[i].Delta.SetContentString(stripProviderThinkingFromStream(content, info))
+					changed = true
+				}
+				if streamResponse.Choices[i].Delta.ReasoningContent != nil {
+					streamResponse.Choices[i].Delta.ReasoningContent = nil
+					changed = true
+				}
+				if streamResponse.Choices[i].Delta.Reasoning != nil {
+					streamResponse.Choices[i].Delta.Reasoning = nil
+					changed = true
+				}
+			}
+			if changed {
+				if out, err := common.Marshal(streamResponse); err == nil {
+					data = string(out)
+				}
+			}
+		}
+	}
+
 	var streamResponse dto.ChatCompletionsStreamResponse
 	if err := common.Unmarshal(common.StringToByteSlice(data), &streamResponse); err != nil {
 		return err
@@ -468,6 +552,10 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		helper.Done(c)
 
 	case types.RelayFormatClaude:
+		// Strip provider thinking for the last chunk too (same as handleClaudeFormat).
+		if isMappedMiniMaxUpstream(info) {
+			lastStreamData = sanitizeMappedProviderChatStreamData(lastStreamData, info)
+		}
 		var streamResponse dto.ChatCompletionsStreamResponse
 		if err := common.Unmarshal(common.StringToByteSlice(lastStreamData), &streamResponse); err != nil {
 			common.SysLog("error unmarshalling stream response: " + err.Error())

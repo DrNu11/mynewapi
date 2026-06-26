@@ -25,6 +25,11 @@ type ThinkingContentInfo struct {
 	SendLastThinkingContent bool
 	HasSentThinkingContent  bool
 	DropProviderThinking    bool
+	// PartialOpenTagBuf 缓存跨 chunk 末尾可能被切断的 <think>（或 <thi、<th 等）候选片段。
+	// 避免 opening tag 本身被 SSE 边界切开导致无法识别，如 "<thi" + "nk>"。
+	PartialOpenTagBuf string
+	// PartialCloseTagBuf 缓存跨 chunk 末尾可能被切断的 </think> 候选片段。
+	PartialCloseTagBuf string
 }
 
 const (

@@ -38,6 +38,14 @@ func stringDeltaFromPrefix(prev string, next string) string {
 	return next
 }
 
+// strOrEmpty returns "" if s is nil, otherwise *s.
+func strOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -66,6 +74,19 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 	if info != nil && info.IsModelMapped && info.OriginModelName != "" {
 		chatResp.Model = info.OriginModelName
+	}
+
+	// Strip <think> from Responses API output_text when upstream is mapped MiniMax.
+	if isMappedMiniMaxUpstream(info) {
+		for i := range chatResp.Choices {
+			content := chatResp.Choices[i].Message.StringContent()
+			if content != "" {
+				chatResp.Choices[i].Message.SetStringContent(stripProviderThinkingBlocks(content))
+			}
+			chatResp.Choices[i].Message.ReasoningContent = nil
+			chatResp.Choices[i].Message.Reasoning = nil
+			chatResp.Choices[i].Message.Name = nil
+		}
 	}
 
 	if usage == nil || usage.TotalTokens == 0 {
