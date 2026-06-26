@@ -376,6 +376,7 @@ func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 				data = strings.ReplaceAll(data, info.UpstreamModelName, info.OriginModelName)
 			}
 		}
+	}
 
 	var streamResponse dto.ChatCompletionsStreamResponse
 	if err := common.Unmarshal(common.StringToByteSlice(data), &streamResponse); err != nil {
