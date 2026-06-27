@@ -2,10 +2,7 @@
  * 视频额度预占 — IMMEDIATE 事务内完成额度判断、来源选择和账号选择。
  * 不在此事务中发起网络请求。
  */
-import {
-  getAccountsTotalQuota,
-  HAILUO_ACCOUNTS,
-} from '@/lib/minimax-video';
+import { getVideoProviderTargets, getVideoProviderTotalQuota } from '@/lib/video-provider';
 import {
   countAccountUsageToday,
   countReservedBySource,
@@ -103,7 +100,7 @@ function reserveUnsafe(args: ReserveInput): ReservationResult {
 
   let accountIndex: number | null = null;
 
-  for (const acc of HAILUO_ACCOUNTS) {
+  for (const acc of getVideoProviderTargets()) {
     if (excludeSet.has(acc.index)) continue;
     const used = countAccountUsageToday(acc.index, since, now);
     if (used < acc.quota) {
@@ -113,7 +110,14 @@ function reserveUnsafe(args: ReserveInput): ReservationResult {
   }
 
   if (accountIndex === null) {
-    const totalQuota = getAccountsTotalQuota();
+    const totalQuota = getVideoProviderTotalQuota();
+    if (totalQuota === null) {
+      throw new QuotaError(
+        'NewAPI 视频渠道暂时不可用，请稍后重试',
+        'VIDEO_PROVIDER_UNAVAILABLE',
+        503,
+      );
+    }
     throw new QuotaError(
       `今日全局视频生成额度已用完 (${totalQuota}/${totalQuota})，0 点自动重置`,
       'GLOBAL_QUOTA_EXHAUSTED',
@@ -160,7 +164,7 @@ export function reserveVideoCapacity(args: ReserveInput): ReservationResult {
 }
 
 function chooseQuotaSource(card: Card, now: number): string | null {
-  if (card.status === 'unused') {
+  if (card.status === 'unused' || card.status === 'activated') {
     const baseUsed = getVideoQuotaUsedBySource(card.id, 'base');
     const baseReserved = countReservedBySource(card.id, 'base', now);
     if (baseUsed + baseReserved < card.video_quota) return 'base';

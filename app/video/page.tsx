@@ -1,68 +1,113 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertCircle,
-  ArrowLeft,
-  CheckCircle2,
-  Clock,
+  ArrowUp,
+  Check,
+  Clock3,
   Copy,
   Download,
   Film,
   ImagePlus,
-  KeyRound,
+  Link2,
   Loader2,
-  Play,
+  Plus,
   RefreshCw,
-  ShoppingCart,
+  RotateCcw,
+  Search,
+  Settings,
   Sparkles,
-  WandSparkles,
-  Ticket,
-  Globe,
+  X,
 } from 'lucide-react';
-import { HAILUO_MODEL_LABELS, HAILUO_MODELS, HAILUO_DURATIONS, HAILUO_RESOLUTIONS } from '@/lib/minimax-video';
-import type { HailuoModel } from '@/lib/minimax-video';
-import { ScrollReveal } from '@/components/scroll-reveal';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
-type TaskState = {
+type HailuoModel = 'hailuo-2.3' | 'hailuo-2.3-fast';
+type StatusFilter = 'all' | 'processing' | 'success' | 'failed';
+
+interface VideoTask {
   task_id: string;
+  model: HailuoModel;
+  prompt: string;
+  duration: number;
+  resolution: string;
   status: string;
-  file_id?: string | null;
-  download_url?: string | null;
-  error_message?: string | null;
-};
+  download_url: string | null;
+  error_message: string | null;
+  created_at: number;
+  updated_at: number;
+}
 
-type AccountInfo = {
-  index: number;
-  quota: number;
+interface QuotaBucket {
+  total: number;
   used: number;
+  reserved?: number;
   remaining: number;
+}
+
+interface QuotaState {
+  base: QuotaBucket;
+  invite_bonus: QuotaBucket;
+  provider?: 'newapi' | 'minimax_direct';
+}
+
+interface PendingOperation {
+  operationId: string;
+  code: string;
+}
+
+const MODEL_LABELS: Record<HailuoModel, string> = {
+  'hailuo-2.3': '海螺 2.3',
+  'hailuo-2.3-fast': '海螺 2.3 Fast',
 };
 
-type QuotaState = {
-  base: { total: number; used: number; reserved: number; remaining: number } | null;
-  invite_bonus: { total: number; used: number; reserved: number; remaining: number } | null;
-  global_quota_total: number;
-  global_quota_used: number;
-  global_quota_remaining: number;
-  accounts?: AccountInfo[];
-};
+const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
+  { value: 'all', label: '全部状态' },
+  { value: 'processing', label: '生成中' },
+  { value: 'success', label: '已完成' },
+  { value: 'failed', label: '失败' },
+];
 
-type GlobalQuotaState = {
-  global_quota_total: number;
-  global_quota_used: number;
-  global_quota_remaining: number;
-  accounts?: AccountInfo[];
-};
+function isSuccess(status: string): boolean {
+  return /success|completed|succeeded/i.test(status);
+}
 
-function statusText(status: string): string {
-  const s = status.toLowerCase();
-  if (s.includes('success')) return '生成完成';
-  if (s.includes('fail') || s.includes('error')) return '生成失败';
-  if (s.includes('queryfailed')) return '查询失败';
-  if (s.includes('processing') || s.includes('queue') || s.includes('prepare')) return '生成中';
-  return status || '等待中';
+function isFailed(status: string): boolean {
+  return /fail|error|cancel/i.test(status);
+}
+
+function isProcessing(status: string): boolean {
+  return !isSuccess(status) && !isFailed(status);
+}
+
+function statusLabel(status: string): string {
+  if (isSuccess(status)) return '已完成';
+  if (isFailed(status)) return '失败';
+  if (/processing|in_progress/i.test(status)) return '生成中';
+  return '排队中';
+}
+
+function formatTime(timestamp: number): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp * 1000));
+}
+
+function mergeTask(tasks: VideoTask[], incoming: VideoTask): VideoTask[] {
+  const index = tasks.findIndex((task) => task.task_id === incoming.task_id);
+  if (index === -1) return [incoming, ...tasks];
+  const next = [...tasks];
+  next[index] = { ...next[index], ...incoming };
+  return next;
 }
 
 export default function VideoPage() {
@@ -70,271 +115,263 @@ export default function VideoPage() {
   const [prompt, setPrompt] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [imageDataUrl, setImageDataUrl] = useState('');
-  const [model, setModel] = useState<HailuoModel>(HAILUO_MODELS[0]);
-  const [duration, setDuration] = useState(6);
-  const [resolution, setResolution] = useState('1080P');
-  const [task, setTask] = useState<TaskState | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [polling, setPolling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [operationId, setOperationId] = useState<string | null>(null);
-  const [submissionUncertain, setSubmissionUncertain] = useState(false);
-  const [operationPolling, setOperationPolling] = useState(false);
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [model, setModel] = useState<HailuoModel>('hailuo-2.3');
+  const [duration, setDuration] = useState<6 | 10>(6);
+  const [resolution, setResolution] = useState<'768P' | '1080P'>('1080P');
+  const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [quota, setQuota] = useState<QuotaState | null>(null);
-  const [quotaLoading, setQuotaLoading] = useState(false);
-  const [globalQuota, setGlobalQuota] = useState<GlobalQuotaState | null>(null);
-  const [globalQuotaLoading, setGlobalQuotaLoading] = useState(true);
-  const [createdAt, setCreatedAt] = useState<number>(0);
-  const [nowTick, setNowTick] = useState<number>(0);
+  const [filter, setFilter] = useState<StatusFilter>('all');
+  const [search, setSearch] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [inviteUrl, setInviteUrl] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteStats, setInviteStats] = useState<{
-    today_rewards: number; today_remaining: number; total_rewards: number;
-    pending_review: number; successful_invites: number; daily_cap_rejected: number;
-  } | null>(null);
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [pendingOperation, setPendingOperation] = useState<PendingOperation | null>(null);
+  const [now, setNow] = useState(Date.now());
 
-  const firstFrameImage = useMemo(() => imageDataUrl || imageUrl.trim(), [imageDataUrl, imageUrl]);
-  const canSubmit = code.trim().length >= 8 && prompt.trim() && firstFrameImage && !loading && !submissionUncertain;
-  const isDone = !!task?.download_url;
+  const fileRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const activeCodeRef = useRef('');
+  const normalizedCode = code.trim().toUpperCase();
+  const firstFrameImage = imageDataUrl || imageUrl.trim();
+  const activeTaskIds = useMemo(
+    () => tasks.filter((task) => isProcessing(task.status)).map((task) => task.task_id).join(','),
+    [tasks],
+  );
 
-  // 从 localStorage 恢复上次输入的卡密
-  useEffect(() => {
+  const totalRemaining = quota
+    ? quota.base.remaining + quota.invite_bonus.remaining
+    : null;
+
+  const filteredTasks = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    return tasks.filter((task) => {
+      const matchesStatus = filter === 'all'
+        || (filter === 'processing' && isProcessing(task.status))
+        || (filter === 'success' && isSuccess(task.status))
+        || (filter === 'failed' && isFailed(task.status));
+      const matchesSearch = !keyword
+        || task.prompt.toLowerCase().includes(keyword)
+        || task.model.toLowerCase().includes(keyword)
+        || task.resolution.toLowerCase().includes(keyword);
+      return matchesStatus && matchesSearch;
+    });
+  }, [filter, search, tasks]);
+
+  const showNotice = useCallback((message: string) => {
+    setNotice(message);
+    window.setTimeout(() => setNotice(null), 1800);
+  }, []);
+
+  const loadHistory = useCallback(async (cardCode: string, quiet = false) => {
+    if (!quiet) setHistoryLoading(true);
     try {
-      const cachedCode = localStorage.getItem('nc_cache_code');
-      if (cachedCode) setCode(cachedCode.toUpperCase());
-    } catch {
-      // ignore
+      const response = await fetch(`/api/video/history?code=${encodeURIComponent(cardCode)}`, {
+        cache: 'no-store',
+      });
+      const body = await response.json();
+      if (!response.ok || !body.success) throw new Error(body.message || '加载任务失败');
+      if (activeCodeRef.current !== cardCode) return;
+      setTasks(body.data.tasks || []);
+    } finally {
+      if (!quiet) setHistoryLoading(false);
     }
   }, []);
 
-  // 从 sessionStorage 恢复 uncertain 操作状态(页面刷新后)
-  useEffect(() => {
+  const loadQuota = useCallback(async (cardCode: string) => {
+    const response = await fetch(`/api/video/quota?code=${encodeURIComponent(cardCode)}`, {
+      cache: 'no-store',
+    });
+    const body = await response.json();
+    if (!response.ok || !body.success) throw new Error(body.message || '查询额度失败');
+    if (activeCodeRef.current !== cardCode) return;
+    setQuota(body.data);
+  }, []);
+
+  const refreshWorkspace = useCallback(async (quiet = false) => {
+    if (normalizedCode.length < 8) return;
+    if (!quiet) setRefreshing(true);
     try {
-      const raw = sessionStorage.getItem('nc_video_op');
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      if (!data.operationId || !data.timestamp || Date.now() - data.timestamp > 30 * 60 * 1000) {
-        sessionStorage.removeItem('nc_video_op');
-        return;
+      await Promise.all([
+        loadHistory(normalizedCode, quiet),
+        loadQuota(normalizedCode),
+      ]);
+      if (!quiet) showNotice('已刷新');
+    } catch (reason) {
+      if (!quiet) setError(reason instanceof Error ? reason.message : '刷新失败');
+    } finally {
+      if (!quiet) setRefreshing(false);
+    }
+  }, [loadHistory, loadQuota, normalizedCode, showNotice]);
+
+  useEffect(() => {
+    activeCodeRef.current = normalizedCode;
+  }, [normalizedCode]);
+
+  useEffect(() => {
+    const savedCode = window.localStorage.getItem('nassa-video-card-code') || '';
+    if (savedCode) setCode(savedCode);
+
+    const savedOperation = window.sessionStorage.getItem('nassa-video-operation');
+    if (savedOperation) {
+      try {
+        const operation = JSON.parse(savedOperation) as PendingOperation;
+        setPendingOperation(operation);
+        if (operation.code) setCode(operation.code);
+      } catch {
+        window.sessionStorage.removeItem('nassa-video-operation');
       }
-      const storedCode: string = data.code || '';
-      setOperationId(data.operationId);
-      if (storedCode) setCode(storedCode);
-
-      fetch('/api/video/operation-status', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code: storedCode, operation_id: data.operationId }),
-      }).then((res) => res.json()).then((body) => {
-        if (body?.data) {
-          if (body.data.status === 'uncertain') {
-            setSubmissionUncertain(true);
-            setError('提交结果正在确认，等待中...');
-          } else if (body.data.status === 'submitted' && body.data.task_id) {
-            setSubmissionUncertain(false);
-            setOperationId(null);
-            sessionStorage.removeItem('nc_video_op');
-            setTask({
-              task_id: body.data.task_id,
-              status: body.data.video_status || 'Submitted',
-              download_url: body.data.download_url || null,
-            });
-          } else if (body.data.status === 'failed') {
-            setSubmissionUncertain(false);
-            setOperationId(null);
-            sessionStorage.removeItem('nc_video_op');
-            setError(body.data.last_error || '任务创建失败');
-          } else {
-            setSubmissionUncertain(false);
-            setOperationId(null);
-            sessionStorage.removeItem('nc_video_op');
-          }
-        }
-      }).catch(() => {});
-    } catch {}
+    }
   }, []);
 
-  // 页面加载时获取全局配额(无需卡密)
   useEffect(() => {
-    let alive = true;
-    setGlobalQuotaLoading(true);
-    fetch('/api/video/quota')
-      .then((res) => res.json())
-      .then((body) => {
-        if (!alive) return;
-        if (body?.data) setGlobalQuota(body.data);
-      })
-      .catch(() => { if (alive) setGlobalQuota(null); })
-      .finally(() => { if (alive) setGlobalQuotaLoading(false); });
-    return () => { alive = false; };
-  }, []);
-
-  // 卡密变更时查询配额
-  useEffect(() => {
-    const c = code.trim().toUpperCase();
-    if (c.length < 8) {
+    if (normalizedCode.length < 8) {
+      setTasks([]);
       setQuota(null);
       return;
     }
-    let alive = true;
-    setQuotaLoading(true);
-    fetch(`/api/video/quota?code=${encodeURIComponent(c)}`)
-      .then((res) => res.json())
-      .then((body) => {
-        if (!alive) return;
-        if (body?.data) {
-          setQuota(body.data);
-          // 同步更新全局配额
-          setGlobalQuota({
-            global_quota_total: body.data.global_quota_total,
-            global_quota_used: body.data.global_quota_used,
-            global_quota_remaining: body.data.global_quota_remaining,
-            accounts: body.data.accounts,
-          });
-        } else {
-          setQuota(null);
-        }
-      })
-      .catch(() => { if (alive) setQuota(null); })
-      .finally(() => { if (alive) setQuotaLoading(false); });
-    return () => { alive = false; };
-  }, [code]);
+    window.localStorage.setItem('nassa-video-card-code', normalizedCode);
+    const timer = window.setTimeout(() => {
+      Promise.all([loadHistory(normalizedCode), loadQuota(normalizedCode)])
+        .catch((reason) => setError(reason instanceof Error ? reason.message : '加载工作台失败'));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [loadHistory, loadQuota, normalizedCode]);
 
-  // uncertain 操作轮询
   useEffect(() => {
-    if (!submissionUncertain || !operationId) return;
-    let alive = true;
-    let timer: ReturnType<typeof setInterval> | null = null;
+    if (!activeTaskIds || normalizedCode.length < 8) return;
+    const ids = activeTaskIds.split(',');
+    let stopped = false;
 
     const poll = async () => {
-      setOperationPolling(true);
+      const updates = await Promise.all(ids.map(async (taskId) => {
+        try {
+          const response = await fetch('/api/video/status', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ code: normalizedCode, task_id: taskId }),
+          });
+          const body = await response.json();
+          return response.ok && body.success ? body.data as VideoTask : null;
+        } catch {
+          return null;
+        }
+      }));
+      if (stopped) return;
+      setTasks((current) => updates.reduce(
+        (next, task) => task ? mergeTask(next, task) : next,
+        current,
+      ));
+    };
+
+    void poll();
+    const timer = window.setInterval(poll, 8000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [activeTaskIds, normalizedCode]);
+
+  useEffect(() => {
+    if (!activeTaskIds) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [activeTaskIds]);
+
+  useEffect(() => {
+    if (!pendingOperation) return;
+    let stopped = false;
+
+    const poll = async () => {
       try {
-        const res = await fetch('/api/video/operation-status', {
+        const response = await fetch('/api/video/operation-status', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            code: code.trim().toUpperCase(),
-            operation_id: operationId,
+            code: pendingOperation.code,
+            operation_id: pendingOperation.operationId,
           }),
         });
-        const body = await res.json();
-        if (!alive) return;
-        if (body?.data) {
-          if (body.data.status === 'submitted' && body.data.task_id) {
-            // 恢复: 进入正常任务轮询
-            setSubmissionUncertain(false);
-            setOperationId(null);
-            sessionStorage.removeItem('nc_video_op');
-            setTask({
-              task_id: body.data.task_id,
-              status: body.data.video_status || 'Submitted',
-              download_url: body.data.download_url || null,
-            });
-          } else if (body.data.status === 'failed') {
-            // 明确失败: 停止轮询,允许重新提交
-            setSubmissionUncertain(false);
-            setOperationId(null);
-            sessionStorage.removeItem('nc_video_op');
-            setError(body.data.last_error || '任务创建失败');
-          }
-          // pending / uncertain 继续轮询
+        const body = await response.json();
+        if (stopped || !response.ok || !body.success) return;
+        if (body.data.status === 'submitted') {
+          window.sessionStorage.removeItem('nassa-video-operation');
+          setPendingOperation(null);
+          await refreshWorkspace(true);
+          showNotice('任务已恢复');
+        } else if (body.data.status === 'failed') {
+          window.sessionStorage.removeItem('nassa-video-operation');
+          setPendingOperation(null);
+          setError(body.data.last_error || '任务提交失败');
         }
       } catch {
-        // 轮询网络错误,忽略
-      } finally {
-        if (alive) setOperationPolling(false);
+        // A transient polling failure should not allow a duplicate submission.
       }
     };
 
-    poll();
-    timer = setInterval(poll, 7000);
+    void poll();
+    const timer = window.setInterval(poll, 7000);
     return () => {
-      alive = false;
-      if (timer) clearInterval(timer);
+      stopped = true;
+      window.clearInterval(timer);
     };
-  }, [submissionUncertain, operationId, code]);
+  }, [pendingOperation, refreshWorkspace, showNotice]);
 
-  // 任务轮询
-  useEffect(() => {
-    if (!task?.task_id || task.download_url) return;
-    let alive = true;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
-    const poll = async () => {
-      setPolling(true);
-      try {
-        const res = await fetch('/api/video/status', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ code: code.trim().toUpperCase(), task_id: task.task_id }),
-        });
-        const body = await res.json();
-        if (!alive) return;
-        if (body?.data) setTask(body.data);
-        if (!body.success && body.message) setError(body.message);
-      } catch (e: any) {
-        if (alive) setError(e?.message || '查询任务失败');
-      } finally {
-        if (alive) setPolling(false);
-      }
-    };
-
-    poll();
-    timer = setInterval(poll, 8000);
-    return () => {
-      alive = false;
-      if (timer) clearInterval(timer);
-    };
-  }, [task?.task_id, task?.download_url, code]);
-
-  // 生成中每秒 tick(进度条计时)
-  useEffect(() => {
-    if (!task || task.download_url) return;
-    setNowTick(Date.now());
-    const t = setInterval(() => setNowTick(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [task?.task_id, task?.download_url]);
-
-  async function onFileChange(file: File | null) {
+  async function handleFile(file: File | null) {
     setError(null);
     if (!file) return;
     if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) {
-      setError('请上传 PNG / JPEG / WebP 图片');
+      setError('请选择 PNG、JPEG 或 WebP 图片');
       return;
     }
     if (file.size > 8 * 1024 * 1024) {
-      setError('图片建议小于 8MB');
+      setError('图片不能超过 8MB');
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
       setImageDataUrl(String(reader.result || ''));
       setImageUrl('');
+      setShowUrlInput(false);
     };
     reader.readAsDataURL(file);
   }
 
-  async function createTask(e: React.FormEvent) {
-    e.preventDefault();
+  async function createTask() {
     setError(null);
-    setLoading(true);
-    setTask(null);
-    setSubmissionUncertain(false);
-    setCreatedAt(Date.now());
+    if (normalizedCode.length < 8) {
+      setSettingsOpen(true);
+      setError('请先配置卡密');
+      return;
+    }
+    if (!prompt.trim()) {
+      promptRef.current?.focus();
+      setError('请输入视频提示词');
+      return;
+    }
+    if (!firstFrameImage) {
+      setError('请添加首帧图片');
+      return;
+    }
+    if (pendingOperation) {
+      setError('上一次提交仍在确认中');
+      return;
+    }
 
-    // 首次生成或之前失败后重新生成 → 创建新 operation_id
-    const opId = operationId || crypto.randomUUID();
-    setOperationId(opId);
-
+    const operationId = crypto.randomUUID();
+    setCreating(true);
     try {
-      const res = await fetch('/api/video/create', {
+      const response = await fetch('/api/video/create', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          operation_id: opId,
-          code: code.trim().toUpperCase(),
+          operation_id: operationId,
+          code: normalizedCode,
           prompt: prompt.trim(),
           first_frame_image: firstFrameImage,
           model,
@@ -342,536 +379,543 @@ export default function VideoPage() {
           resolution,
         }),
       });
-      const body = await res.json();
+      const body = await response.json();
       if (!body.success) {
         if (body.code === 'SUBMISSION_UNCERTAIN') {
-          setSubmissionUncertain(true);
-          setError(body.message);
-          try {
-            sessionStorage.setItem('nc_video_op', JSON.stringify({
-              operationId: opId,
-              code: code.trim().toUpperCase(),
-              timestamp: Date.now(),
-            }));
-          } catch {}
-          return;
+          const operation = { operationId, code: normalizedCode };
+          setPendingOperation(operation);
+          window.sessionStorage.setItem('nassa-video-operation', JSON.stringify(operation));
         }
-        setError(body.message || '创建任务失败');
-        setOperationId(null);
-        return;
+        throw new Error(body.message || '创建任务失败');
       }
-      setTask(body.data);
-      setOperationId(null);
-      // 更新配额
-      if (body.data.base || body.data.invite_bonus) {
-        setQuota({
-          base: body.data.base,
-          invite_bonus: body.data.invite_bonus,
-          global_quota_total: body.data.global_quota_total,
-          global_quota_used: body.data.global_quota_used,
-          global_quota_remaining: body.data.global_quota_remaining,
-          accounts: body.data.accounts,
-        });
-        setGlobalQuota({
-          global_quota_total: body.data.global_quota_total,
-          global_quota_used: body.data.global_quota_used,
-          global_quota_remaining: body.data.global_quota_remaining,
-          accounts: body.data.accounts,
-        });
-      }
-    } catch (e: any) {
-      setError(e?.message || '创建任务失败');
+
+      setTasks((current) => mergeTask(current, body.data as VideoTask));
+      setQuota((current) => current ? {
+        ...current,
+        base: body.data.base,
+        invite_bonus: body.data.invite_bonus,
+      } : {
+        base: body.data.base,
+        invite_bonus: body.data.invite_bonus,
+        provider: body.data.provider,
+      });
+      setPrompt('');
+      setImageDataUrl('');
+      setImageUrl('');
+      showNotice('任务已提交');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '创建任务失败');
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   }
 
-  async function getInviteLink() {
-    if (!code.trim() || code.trim().length < 8) return;
+  function reuseTask(task: VideoTask) {
+    setPrompt(task.prompt);
+    setModel(task.model);
+    setDuration(task.duration === 10 ? 10 : 6);
+    setResolution(task.resolution === '768P' ? '768P' : '1080P');
+    promptRef.current?.focus();
+    showNotice('参数已载入');
+  }
+
+  async function copyText(value: string, message: string) {
+    await navigator.clipboard.writeText(value);
+    showNotice(message);
+  }
+
+  async function createInviteLink() {
+    if (normalizedCode.length < 8) return;
     setInviteLoading(true);
     try {
-      const res = await fetch('/api/invite/link', {
+      const response = await fetch('/api/invite/link', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ card_code: code.trim().toUpperCase() }),
+        body: JSON.stringify({ card_code: normalizedCode }),
       });
-      const body = await res.json();
-      if (body?.data) {
-        setInviteUrl(body.data.invite_url);
-        setInviteStats(body.data);
-      }
-    } catch {} finally { setInviteLoading(false); }
-  }
-
-  async function copyUrl() {
-    if (!task?.download_url) return;
-    await navigator.clipboard.writeText(task.download_url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  }
-
-  function quotaLabel(): { text: string; color: string } | null {
-    if (!quota) return null;
-    const baseRemain = quota.base?.remaining ?? 0;
-    const bonusRemain = quota.invite_bonus?.remaining ?? 0;
-    const totalRemain = baseRemain + bonusRemain;
-    if (totalRemain <= 0) return { text: '此卡次数已用完', color: 'text-red-400' };
-    if (quota.base && quota.invite_bonus) {
-      return { text: `可用 ${totalRemain} 次 (基础${baseRemain}+奖励${bonusRemain})`, color: 'text-brand-400' };
+      const body = await response.json();
+      if (!response.ok || !body.success) throw new Error(body.message || '生成邀请链接失败');
+      setInviteUrl(body.data.invite_url);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '生成邀请链接失败');
+    } finally {
+      setInviteLoading(false);
     }
-    return { text: `此卡剩余 ${totalRemain} 次`, color: 'text-brand-400' };
   }
-
-  function globalQuotaLabel(gq: GlobalQuotaState | null): { text: string; color: string } | null {
-    if (!gq) return null;
-    if (gq.global_quota_remaining <= 0) return { text: `全局 ${gq.global_quota_total}/${gq.global_quota_total} (0点重置)`, color: 'text-red-400' };
-    return { text: `全局剩余 ${gq.global_quota_remaining}/${gq.global_quota_total} 次 (0点重置)`, color: 'text-emerald-400' };
-  }
-
-  const ql = quotaLabel();
-  const gql = globalQuotaLabel(globalQuota);
-  const buyCardUrl = process.env.NEXT_PUBLIC_BUY_CARD_URL || 'https://card.nassaapi.xyz';
-  const totalRemaining = quota ? (quota.base?.remaining ?? 0) + (quota.invite_bonus?.remaining ?? 0) : -1;
-  const isQuotaExhausted = quota !== null && totalRemaining <= 0;
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-100">
-      <div className="mx-auto max-w-5xl px-6 pt-10 pb-20">
-        <ScrollReveal>
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-slate-200"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            返回激活中心
+    <main className="min-h-screen bg-[#f7f8fa] pb-[330px] text-[#17191d] md:pb-[245px]">
+      <header className="sticky top-0 z-30 border-b border-[#e6e8ec] bg-white/95 backdrop-blur">
+        <div className="mx-auto flex h-[72px] max-w-[1320px] items-center justify-between px-4 sm:px-6">
+          <Link href="/video" className="no-underline flex min-w-0 items-center gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center bg-[#071525] text-xl font-black text-[#28b7ff]">
+              N
+            </span>
+            <span className="truncate text-lg font-semibold text-[#202227] sm:text-xl">
+              Nassa Video Playground
+            </span>
           </Link>
-        </ScrollReveal>
-
-        <ScrollReveal delay={100}>
-          <div className="mt-8 text-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-brand-500/30 bg-brand-500/10 px-4 py-1.5 text-sm text-brand-400">
-              <Sparkles className="h-4 w-4" />
-              海螺 AI 图生视频
-            </div>
-            <h1 className="mt-6 text-4xl font-bold tracking-tight sm:text-5xl">
-              图生视频工作台
-            </h1>
-            <p className="mt-4 text-base text-slate-400 sm:text-lg">
-              未激活卡密体验 1 次，激活后可用邀请奖励次数。邀请好友成功生成视频可获 +1 次，每日最多 3 次。
-            </p>
-
-            {/* 规则提示 */}
-            <div className="mt-6 mx-auto max-w-2xl rounded-2xl border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-amber-500/10 p-5 text-left shadow-lg shadow-amber-500/5">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/20">
-                  <AlertCircle className="h-5 w-5 text-amber-300" />
-                </div>
-                <div className="space-y-2 text-sm">
-                  <p className="font-semibold text-amber-100">
-                    使用规则
-                  </p>
-                  <ul className="space-y-1.5 text-amber-200/80">
-                    <li className="flex items-start gap-2">
-                      <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-                      <span><strong className="text-amber-100">未激活</strong>卡密可体验基础次数，<strong className="text-amber-100">已激活</strong>卡密可使用邀请奖励次数</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-                      <span>邀请好友成功生成视频，你获得 <strong className="text-amber-100">+1 次</strong>奖励，每日最多 <strong className="text-amber-100">3 次</strong></span>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-            {/* 全局配额 */}
-            <div className="mt-5 flex flex-col items-center gap-2">
-              {globalQuotaLoading ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-500">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  查询全局配额...
-                </span>
-              ) : gql ? (
-                <>
-                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs backdrop-blur ${
-                    globalQuota && globalQuota.global_quota_remaining <= 0
-                      ? 'border-red-500/30 bg-red-500/10 text-red-400'
-                      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                  }`}>
-                    <Globe className="h-3.5 w-3.5" />
-                    {gql.text}
-                  </span>
-                  {globalQuota?.accounts && globalQuota.accounts.length > 1 && (
-                    <div className="flex flex-wrap justify-center gap-1.5">
-                      {globalQuota.accounts.map((a) => (
-                        <span key={a.index} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${
-                          a.remaining <= 0
-                            ? 'border-red-500/20 bg-red-500/5 text-red-400'
-                            : 'border-slate-700 bg-slate-900/60 text-slate-400'
-                        }`}>
-                          账号{a.index + 1}: {a.remaining}/{a.quota}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : null}
-            </div>
+          <div className="flex items-center gap-2">
+            {totalRemaining !== null && (
+              <span className="hidden text-sm text-[#676b73] sm:inline">
+                剩余 {totalRemaining} 次
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setPrompt('');
+                setImageDataUrl('');
+                setImageUrl('');
+                promptRef.current?.focus();
+              }}
+              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#ef4444] px-3 text-sm font-semibold text-white shadow-sm hover:bg-[#dc3636]"
+            >
+              <Plus className="h-4 w-4" />
+              New
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              title="工作台设置"
+              className="flex h-9 w-9 items-center justify-center rounded-md text-[#5d6169] hover:bg-[#f1f3f5] hover:text-[#17191d]"
+            >
+              <Settings className="h-5 w-5" />
+            </button>
           </div>
-        </ScrollReveal>
+        </div>
+      </header>
 
-        <div className="mt-12 grid gap-6 lg:grid-cols-[380px_1fr]">
-          <ScrollReveal delay={150}>
-            <section className="rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/15 text-brand-400">
-                  <Film className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-100">创建任务</h2>
-                  <p className="text-xs text-slate-500">海螺 AI · 服务端安全调用</p>
-                </div>
-              </div>
+      <section className="mx-auto max-w-[1320px] px-4 py-6 sm:px-6">
+        <div className="grid grid-cols-[minmax(0,1fr)_48px] gap-3 sm:flex sm:flex-row">
+          <select
+            value={filter}
+            onChange={(event) => setFilter(event.target.value as StatusFilter)}
+            aria-label="筛选任务状态"
+            className="h-12 rounded-md border border-[#dfe2e7] bg-white px-4 text-sm font-medium outline-none focus:border-[#8a9099] sm:w-40"
+          >
+            {STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <label className="order-3 col-span-2 flex h-12 min-w-0 flex-1 items-center gap-3 rounded-md border border-[#dfe2e7] bg-white px-4 focus-within:border-[#8a9099] sm:order-none sm:col-span-1">
+            <Search className="h-5 w-5 shrink-0 text-[#9ca1a9]" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="搜索提示词、模型或参数..."
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#a7abb3]"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => void refreshWorkspace()}
+            disabled={normalizedCode.length < 8 || refreshing}
+            title="刷新任务"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-[#dfe2e7] bg-white text-[#656a72] hover:bg-[#f3f4f6] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
 
-              <form onSubmit={createTask} className="mt-5 space-y-5">
-                <label className="block">
-                  <span className="flex items-center gap-2 text-sm font-medium text-slate-300">
-                    <KeyRound className="h-4 w-4" />
-                    卡密
-                  </span>
-                  <input
-                    value={code}
-                    onChange={(e) => setCode(e.target.value.toUpperCase())}
-                    placeholder="GP-XXXX-XXXX-XXXX / DE-XXXX-XXXX-XXXX"
-                    className="mt-2 w-full rounded-lg border border-slate-600 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 placeholder:text-slate-600 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30"
-                  />
-                  <div className="mt-2 flex items-center gap-2">
-                    {quotaLoading ? (
-                      <span className="text-xs text-slate-500">
-                        <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
-                        查询配额...
-                      </span>
-                    ) : ql ? (
-                      <span className={`inline-flex items-center gap-1 rounded-full border border-slate-700 px-2.5 py-0.5 text-xs ${ql.color}`}>
-                        <Ticket className="h-3 w-3" />
-                        {ql.text}
-                      </span>
-                    ) : code.trim().length >= 8 ? (
-                      <span className="text-xs text-slate-500">卡密无效、已激活或已过期（仅限未激活卡密）</span>
-                    ) : (
-                      <span className="text-xs text-slate-500">输入未激活卡密自动显示剩余次数</span>
-                    )}
-                  </div>
-                </label>
-
-                <label className="block">
-                  <span className="flex items-center gap-2 text-sm font-medium text-slate-300">
-                    <ImagePlus className="h-4 w-4" />
-                    首帧图片
-                  </span>
-                  <div className="mt-2 flex gap-2">
-                    <input
-                      value={imageUrl}
-                      onChange={(e) => {
-                        setImageUrl(e.target.value);
-                        setImageDataUrl('');
-                      }}
-                      placeholder="https://.../image.jpg"
-                      className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-950 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => fileRef.current?.click()}
-                      className="rounded-lg border border-slate-600 bg-slate-950 px-3 text-slate-300 transition hover:border-brand-500/70 hover:text-white"
-                      title="上传图片"
-                    >
-                      <ImagePlus className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="hidden"
-                    onChange={(e) => onFileChange(e.target.files?.[0] || null)}
-                  />
-                </label>
-
-                <label className="block">
-                  <span className="flex items-center gap-2 text-sm font-medium text-slate-300">
-                    <WandSparkles className="h-4 w-4" />
-                    提示词
-                  </span>
-                  <textarea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    rows={6}
-                    placeholder="描述镜头运动、主体动作、氛围和风格..."
-                    className="mt-2 w-full resize-none rounded-lg border border-slate-600 bg-slate-950 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30"
-                  />
-                </label>
-
-                <div className="grid grid-cols-3 gap-3">
-                  <label className="block">
-                    <span className="text-xs text-slate-400">模型</span>
-                    <select
-                      value={model}
-                      onChange={(e) => setModel(e.target.value as HailuoModel)}
-                      className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-2 py-2 text-xs outline-none focus:border-brand-500"
-                    >
-                      {HAILUO_MODELS.map((m) => (
-                        <option key={m} value={m}>{HAILUO_MODEL_LABELS[m]}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block">
-                    <span className="text-xs text-slate-400">时长</span>
-                    <select
-                      value={duration}
-                      onChange={(e) => setDuration(Number(e.target.value))}
-                      className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-2 py-2 text-xs outline-none focus:border-brand-500"
-                    >
-                      {HAILUO_DURATIONS.map((d) => (
-                        <option key={d} value={d}>{d}s</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block">
-                    <span className="text-xs text-slate-400">分辨率</span>
-                    <select
-                      value={resolution}
-                      onChange={(e) => setResolution(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-2 py-2 text-xs outline-none focus:border-brand-500"
-                    >
-                      {HAILUO_RESOLUTIONS.map((r) => (
-                        <option key={r}>{r}</option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                {error && (
-                  <div className={`flex gap-2 rounded-lg border p-3 text-sm ${
-                    submissionUncertain
-                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
-                      : 'border-red-500/40 bg-red-500/10 text-red-200'
-                  }`}>
-                    {submissionUncertain ? (
-                      <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
-                    ) : (
-                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    )}
-                    <span>{error}</span>
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={!canSubmit}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-3 font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-700"
+        {historyLoading ? (
+          <div className="flex min-h-[360px] items-center justify-center text-sm text-[#8a8f97]">
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+            正在加载任务
+          </div>
+        ) : filteredTasks.length > 0 ? (
+          <div className="mt-5 grid gap-4 xl:grid-cols-2">
+            {filteredTasks.map((task) => {
+              const elapsedSeconds = Math.max(0, Math.floor((now - task.created_at * 1000) / 1000));
+              const progress = Math.min(94, Math.max(8, Math.round((elapsedSeconds / 240) * 100)));
+              return (
+                <article
+                  key={task.task_id}
+                  className="grid min-h-[214px] overflow-hidden rounded-md border border-[#e0e3e8] bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:grid-cols-[42%_1fr]"
                 >
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : submissionUncertain ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                  {submissionUncertain ? '等待结果确认中...' : '创建视频任务'}
-                </button>
+                  <div className="relative flex min-h-[210px] items-center justify-center overflow-hidden bg-[#f0f1f3] sm:min-h-0">
+                    {isSuccess(task.status) && task.download_url ? (
+                      <video
+                        src={task.download_url}
+                        controls
+                        preload="metadata"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : isFailed(task.status) ? (
+                      <div className="flex flex-col items-center gap-2 text-[#f05b68]">
+                        <AlertCircle className="h-8 w-8" />
+                        <span className="text-sm font-medium">生成失败</span>
+                      </div>
+                    ) : (
+                      <div className="flex w-full flex-col items-center gap-4 px-7 text-[#69707a]">
+                        <div className="relative flex h-14 w-14 items-center justify-center rounded-full border border-[#d5d9df] bg-white">
+                          <Film className="h-6 w-6" />
+                          <span className="absolute inset-0 animate-ping rounded-full border border-[#b7bdc6] opacity-40" />
+                        </div>
+                        <div className="w-full">
+                          <div className="mb-2 flex items-center justify-between text-xs">
+                            <span>{statusLabel(task.status)}</span>
+                            <span>{progress}%</span>
+                          </div>
+                          <div className="h-1.5 overflow-hidden rounded-full bg-[#dfe2e6]">
+                            <div
+                              className="h-full rounded-full bg-[#25282e] transition-[width] duration-700"
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded bg-black/60 px-2 py-1 text-[11px] text-white">
+                      <Clock3 className="h-3 w-3" />
+                      {task.duration}s
+                    </span>
+                  </div>
 
-                {/* 邀请入口 */}
-                <div className="mt-4 rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
-                  <p className="text-xs font-medium text-violet-300">
-                    邀请好友成功生成视频，你可获得 +1 次奖励（每日最多 3 次）
-                  </p>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={getInviteLink}
-                      disabled={inviteLoading || code.trim().length < 8}
-                      className="flex items-center gap-1.5 rounded-lg bg-violet-500 px-3 py-2 text-xs font-medium text-white transition hover:bg-violet-600 disabled:cursor-not-allowed disabled:bg-slate-700"
-                    >
-                      {inviteLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ticket className="h-3.5 w-3.5" />}
-                      获取邀请链接
-                    </button>
-                    {inviteUrl && (
+                  <div className="flex min-w-0 flex-col p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <p
+                        className="text-sm font-medium leading-6 text-[#25282d]"
+                        style={{
+                          display: '-webkit-box',
+                          WebkitBoxOrient: 'vertical',
+                          WebkitLineClamp: 3,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        {task.prompt}
+                      </p>
+                      <span className={`shrink-0 rounded px-2 py-1 text-[11px] font-medium ${
+                        isSuccess(task.status)
+                          ? 'bg-[#e9f7ef] text-[#238654]'
+                          : isFailed(task.status)
+                            ? 'bg-[#fff0f1] text-[#d94855]'
+                            : 'bg-[#eef2f7] text-[#59616d]'
+                      }`}>
+                        {statusLabel(task.status)}
+                      </span>
+                    </div>
+
+                    {task.error_message && (
+                      <p className="mt-2 line-clamp-2 text-xs text-[#d94855]">{task.error_message}</p>
+                    )}
+
+                    <div className="mt-auto flex flex-wrap gap-1.5 pt-4 text-[11px] text-[#666c75]">
+                      <span className="rounded bg-[#f2f3f5] px-2 py-1">{MODEL_LABELS[task.model] || task.model}</span>
+                      <span className="rounded bg-[#f2f3f5] px-2 py-1">{task.resolution}</span>
+                      <span className="rounded bg-[#f2f3f5] px-2 py-1">{formatTime(task.created_at)}</span>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-end gap-1 border-t border-[#eff0f2] pt-2">
                       <button
                         type="button"
-                        onClick={() => { navigator.clipboard.writeText(inviteUrl); }}
-                        className="rounded-lg border border-slate-600 px-3 py-2 text-xs text-slate-300 hover:border-slate-400"
+                        onClick={() => reuseTask(task)}
+                        title="复用参数"
+                        className="flex h-8 w-8 items-center justify-center rounded text-[#757b84] hover:bg-[#f1f3f5] hover:text-[#25282d]"
                       >
-                        复制链接
+                        <RotateCcw className="h-4 w-4" />
                       </button>
-                    )}
-                  </div>
-                  {inviteStats && (
-                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
-                      <span>今日已获 {inviteStats.today_rewards}/3 次</span>
-                      <span>累计 {inviteStats.total_rewards} 次</span>
-                      {inviteStats.pending_review > 0 && (
-                        <span className="text-amber-400">{inviteStats.pending_review} 次待审核</span>
+                      {task.download_url && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void copyText(task.download_url!, '链接已复制')}
+                            title="复制视频链接"
+                            className="flex h-8 w-8 items-center justify-center rounded text-[#757b84] hover:bg-[#f1f3f5] hover:text-[#25282d]"
+                          >
+                            <Copy className="h-4 w-4" />
+                          </button>
+                          <a
+                            href={task.download_url}
+                            download
+                            target="_blank"
+                            rel="noreferrer"
+                            title="下载视频"
+                            className="flex h-8 w-8 items-center justify-center rounded text-[#757b84] hover:bg-[#f1f3f5] hover:text-[#25282d]"
+                          >
+                            <Download className="h-4 w-4" />
+                          </a>
+                        </>
                       )}
                     </div>
-                  )}
-                </div>
-              </form>
-            </section>
-          </ScrollReveal>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex min-h-[390px] flex-col items-center justify-center text-center text-[#8a9098]">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-[#dfe2e7] bg-white">
+              <Film className="h-6 w-6" />
+            </div>
+            <p className="text-sm font-medium text-[#5f646c]">
+              {normalizedCode.length < 8 ? '尚未加载任务' : '没有符合条件的任务'}
+            </p>
+            {normalizedCode.length < 8 && (
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="mt-3 rounded-md border border-[#d7dae0] bg-white px-3 py-2 text-xs font-medium text-[#50555d] hover:bg-[#f2f3f5]"
+              >
+                配置卡密
+              </button>
+            )}
+          </div>
+        )}
+      </section>
 
-          <ScrollReveal delay={200}>
-            <section className="min-h-[680px] rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-700 pb-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-100">生成结果</h2>
-                  <p className="text-xs text-slate-500">任务创建后自动轮询，成功后展示视频预览</p>
+      <section className="fixed inset-x-0 bottom-0 z-20 px-3 pb-3 sm:px-5 sm:pb-5">
+        <div className="mx-auto max-w-[1080px] rounded-lg border border-[#dfe2e6] bg-white p-3 shadow-[0_16px_50px_rgba(17,24,39,0.16)] sm:p-4">
+          {firstFrameImage && (
+            <div className="mb-3 flex items-center gap-3 border-b border-[#eceef1] pb-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={firstFrameImage} alt="首帧预览" className="h-12 w-12 rounded object-cover" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium text-[#43474e]">首帧图片</p>
+                <p className="truncate text-[11px] text-[#969ba3]">
+                  {imageDataUrl ? '本地图片' : imageUrl}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setImageDataUrl('');
+                  setImageUrl('');
+                }}
+                title="移除首帧"
+                className="flex h-8 w-8 items-center justify-center rounded text-[#8b9098] hover:bg-[#f1f3f5]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
+          {showUrlInput && !imageDataUrl && (
+            <div className="mb-3 flex gap-2">
+              <input
+                value={imageUrl}
+                onChange={(event) => setImageUrl(event.target.value)}
+                placeholder="https://.../first-frame.jpg"
+                className="h-10 min-w-0 flex-1 rounded-md border border-[#dfe2e7] px-3 text-sm outline-none focus:border-[#858b94]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowUrlInput(false)}
+                title="收起图片链接"
+                className="flex h-10 w-10 items-center justify-center rounded-md border border-[#dfe2e7] text-[#747a83] hover:bg-[#f2f3f5]"
+              >
+                <Check className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
+          <textarea
+            ref={promptRef}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            rows={2}
+            maxLength={1800}
+            placeholder="描述你想生成的视频..."
+            className="max-h-28 min-h-[54px] w-full resize-none bg-transparent px-1 text-sm leading-6 text-[#24272c] outline-none placeholder:text-[#a6abb3]"
+          />
+
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <label className="min-w-[150px] flex-1 sm:flex-none">
+              <span className="mb-1 block text-[11px] text-[#8d929a]">模型</span>
+              <select
+                value={model}
+                onChange={(event) => setModel(event.target.value as HailuoModel)}
+                className="h-10 w-full rounded-md border border-[#e0e2e6] bg-[#fafafa] px-3 text-xs font-medium outline-none focus:border-[#91969f]"
+              >
+                <option value="hailuo-2.3">海螺 2.3</option>
+                <option value="hailuo-2.3-fast">海螺 2.3 Fast</option>
+              </select>
+            </label>
+            <label className="min-w-[92px] flex-1 sm:flex-none">
+              <span className="mb-1 block text-[11px] text-[#8d929a]">时长</span>
+              <select
+                value={duration}
+                onChange={(event) => setDuration(Number(event.target.value) as 6 | 10)}
+                className="h-10 w-full rounded-md border border-[#e0e2e6] bg-[#fafafa] px-3 text-xs font-medium outline-none focus:border-[#91969f]"
+              >
+                <option value={6}>6 秒</option>
+                <option value={10}>10 秒</option>
+              </select>
+            </label>
+            <label className="min-w-[105px] flex-1 sm:flex-none">
+              <span className="mb-1 block text-[11px] text-[#8d929a]">画质</span>
+              <select
+                value={resolution}
+                onChange={(event) => setResolution(event.target.value as '768P' | '1080P')}
+                className="h-10 w-full rounded-md border border-[#e0e2e6] bg-[#fafafa] px-3 text-xs font-medium outline-none focus:border-[#91969f]"
+              >
+                <option value="768P">768P</option>
+                <option value="1080P">1080P</option>
+              </select>
+            </label>
+
+            <div className="ml-auto flex items-center gap-2 pt-4 sm:pt-0">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={(event) => void handleFile(event.target.files?.[0] || null)}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                title="上传首帧"
+                className="flex h-10 w-10 items-center justify-center rounded-md bg-[#eef0f3] text-[#59606a] hover:bg-[#e3e6ea]"
+              >
+                <ImagePlus className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowUrlInput((value) => !value)}
+                title="使用图片链接"
+                className="flex h-10 w-10 items-center justify-center rounded-md bg-[#eef0f3] text-[#59606a] hover:bg-[#e3e6ea]"
+              >
+                <Link2 className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void createTask()}
+                disabled={creating || Boolean(pendingOperation)}
+                title="生成视频"
+                className="flex h-10 w-10 items-center justify-center rounded-md bg-[#202226] text-white hover:bg-black disabled:cursor-not-allowed disabled:bg-[#d8dbe0]"
+              >
+                {creating || pendingOperation ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ArrowUp className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {(error || notice) && (
+        <div className={`fixed bottom-[305px] left-1/2 z-50 max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-md px-4 py-2 text-sm shadow-lg md:bottom-[220px] ${
+          error ? 'bg-[#dc3f4d] text-white' : 'bg-[#22252a] text-white'
+        }`}>
+          <div className="flex items-center gap-2">
+            {error ? <AlertCircle className="h-4 w-4 shrink-0" /> : <Check className="h-4 w-4 shrink-0" />}
+            <span>{error || notice}</span>
+            {error && (
+              <button type="button" onClick={() => setError(null)} title="关闭提示">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {settingsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-label="工作台设置"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setSettingsOpen(false);
+          }}
+        >
+          <div className="w-full max-w-lg rounded-lg border border-[#dedfe3] bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#eceef1] px-5 py-4">
+              <div>
+                <h2 className="font-semibold text-[#22252a]">工作台设置</h2>
+                <p className="mt-0.5 text-xs text-[#92979f]">Nassa Video Playground</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(false)}
+                title="关闭设置"
+                className="flex h-8 w-8 items-center justify-center rounded text-[#767c85] hover:bg-[#f1f3f5]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-6 px-5 py-5">
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-[#40444a]">卡密</span>
+                <input
+                  value={code}
+                  onChange={(event) => setCode(event.target.value.toUpperCase())}
+                  placeholder="GP-XXXX-XXXX-XXXX"
+                  autoComplete="off"
+                  className="h-11 w-full rounded-md border border-[#d9dce1] px-3 font-mono text-sm outline-none focus:border-[#777e88]"
+                />
+              </label>
+
+              <div className="border-t border-[#eceef1] pt-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-[#40444a]">视频额度</span>
+                  <span className="text-xs text-[#8e939b]">
+                    {quota ? `基础 ${quota.base.remaining} · 奖励 ${quota.invite_bonus.remaining}` : '未加载'}
+                  </span>
                 </div>
-                {task && (
-                  <div className="flex items-center gap-2 rounded-full border border-brand-500/30 bg-brand-500/10 px-3 py-1.5 text-xs text-brand-300">
-                    {isDone ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    ) : polling ? (
-                      <RefreshCw className="h-4 w-4 animate-spin text-brand-300" />
-                    ) : (
-                      <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                    )}
-                    {statusText(task.status)}
+                {quota && (
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#eceef1]">
+                    <div
+                      className="h-full rounded-full bg-[#22252a]"
+                      style={{
+                        width: `${Math.min(100, ((quota.base.remaining + quota.invite_bonus.remaining) / Math.max(1, quota.base.total + quota.invite_bonus.total)) * 100)}%`,
+                      }}
+                    />
                   </div>
                 )}
               </div>
 
-              <div className="mt-5 grid gap-5 lg:grid-cols-[260px_1fr]">
-                <div className="space-y-3">
-                  <div className="aspect-square overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
-                    {firstFrameImage ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={firstFrameImage} alt="首帧预览" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-slate-600">
-                        <ImagePlus className="h-8 w-8" />
-                      </div>
-                    )}
+              <div className="border-t border-[#eceef1] pt-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-[#40444a]">邀请奖励</p>
+                    <p className="mt-1 text-xs text-[#92979f]">每位好友成功生成后增加一次额度</p>
                   </div>
-                  {task?.task_id && (
-                    <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-slate-400">
-                      <div className="text-slate-500">Task ID</div>
-                      <div className="mt-1 break-all font-mono text-slate-200">{task.task_id}</div>
-                    </div>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => void createInviteLink()}
+                    disabled={normalizedCode.length < 8 || inviteLoading}
+                    className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-[#d9dce1] px-3 text-xs font-medium text-[#51565e] hover:bg-[#f3f4f6] disabled:opacity-40"
+                  >
+                    {inviteLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    生成链接
+                  </button>
                 </div>
-
-                <div className="rounded-xl border border-slate-700 bg-slate-950 p-4">
-                  {task?.download_url ? (
-                    <div className="space-y-4">
-                      <video src={task.download_url} controls className="aspect-video w-full rounded-lg bg-black" />
-                      <div className="flex flex-wrap gap-3">
-                        <a
-                          href={task.download_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载视频
-                        </a>
-                        <button
-                          type="button"
-                          onClick={copyUrl}
-                          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500"
-                        >
-                          <Copy className="h-4 w-4" />
-                          {copied ? '已复制' : '复制链接'}
-                        </button>
-                      </div>
-                    </div>
-                  ) : task ? (
-                    <div className="flex min-h-[420px] flex-col items-center justify-center px-4">
-                      {/* 实时进度条 */}
-                      <div className="w-full max-w-md space-y-5">
-                        {/* 状态图标 + 文字 */}
-                        <div className="flex items-center justify-center gap-3">
-                          <div className="relative flex h-12 w-12 items-center justify-center">
-                            <div className="absolute inset-0 animate-ping rounded-full bg-brand-500/20" />
-                            <div className="absolute inset-0 animate-pulse rounded-full border-2 border-brand-500/40" />
-                            <Loader2 className="relative h-6 w-6 animate-spin text-brand-400" />
-                          </div>
-                          <div>
-                            <div className="text-lg font-semibold text-slate-100">
-                              {statusText(task.status)}
-                            </div>
-                            <div className="text-sm text-slate-400">
-                              {task.error_message || '海螺 AI 正在生成视频，请耐心等待'}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* 进度条 */}
-                        <div className="overflow-hidden rounded-full h-3 bg-slate-800 shadow-inner">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-brand-500 via-purple-500 to-cyan-400 animate-progress-bar"
-                            style={{
-                              backgroundSize: '200% 100%',
-                              animation: 'progress-slide 2s linear infinite',
-                            }}
-                          />
-                        </div>
-
-                        {/* 已用时间 */}
-                        <div className="flex items-center justify-center gap-2 text-sm">
-                          <Clock className="h-4 w-4 text-slate-500" />
-                          <span className="font-mono tabular-nums text-slate-300">
-                            {createdAt && nowTick
-                              ? (() => {
-                                  const elapsed = Math.floor((nowTick - createdAt) / 1000);
-                                  const m = Math.floor(elapsed / 60);
-                                  const s = elapsed % 60;
-                                  return `已等待 ${m}:${String(s).padStart(2, '0')}`;
-                                })()
-                              : '准备中...'}
-                          </span>
-                          <span className="text-slate-500">· 每 8 秒自动更新状态</span>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
-                      <Film className="h-12 w-12 text-slate-700" />
-                      <h3 className="mt-4 text-sm font-medium text-slate-300">
-                        还没有视频任务
-                      </h3>
-                      <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">
-                        填写左侧表单创建任务，完成后这里会出现可播放的视频。
-                      </p>
-                    </div>
-                  )}
-                </div>
+                {inviteUrl && (
+                  <button
+                    type="button"
+                    onClick={() => void copyText(inviteUrl, '邀请链接已复制')}
+                    className="mt-3 flex w-full items-center gap-2 rounded-md bg-[#f4f5f6] px-3 py-2 text-left text-xs text-[#60666f]"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{inviteUrl}</span>
+                    <Copy className="h-3.5 w-3.5 shrink-0" />
+                  </button>
+                )}
               </div>
+            </div>
 
-              {/* 购买日卡 CTA */}
-              <div className="mt-6 rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/10 via-slate-900/80 to-purple-500/5 p-5">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-500/20">
-                    <ShoppingCart className="h-5 w-5 text-purple-300" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-base font-semibold text-slate-100">
-                      {isQuotaExhausted ? '视频次数已用完' : '还没有卡密？'}
-                    </h3>
-                    <p className="mt-1.5 text-sm leading-relaxed text-slate-400">
-                      {isQuotaExhausted
-                        ? '你可以购买日卡继续使用，或邀请好友获得奖励次数。'
-                        : '购买日卡后，回到本页输入卡密即可使用 API 与视频生成能力。'}
-                    </p>
-                    <p className="mt-2 text-xs text-slate-500">自动发卡 · 激活即用 · 支持 DeepSeek / GPT / Claude</p>
-                    <a
-                      href={buyCardUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-4 inline-flex items-center gap-2 rounded-lg bg-purple-500/90 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-purple-500"
-                    >
-                      <ShoppingCart className="h-4 w-4" />
-                      {isQuotaExhausted ? '购买日卡' : '立即购买日卡'}
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </section>
-          </ScrollReveal>
+            <div className="flex items-center justify-between border-t border-[#eceef1] px-5 py-4">
+              <Link href="/" className="text-xs text-[#777d86] hover:text-[#22252a]">
+                返回激活中心
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  setSettingsOpen(false);
+                  void refreshWorkspace(true);
+                }}
+                className="rounded-md bg-[#202226] px-4 py-2 text-sm font-medium text-white hover:bg-black"
+              >
+                完成
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </main>
   );
 }

@@ -6,10 +6,7 @@ import {
   updateVideoTask,
   type VideoTask,
 } from '@/lib/db';
-import {
-  queryHailuoVideoTask,
-  retrieveHailuoFile,
-} from '@/lib/minimax-video';
+import { queryVideoTask } from '@/lib/video-provider';
 import { settleInviteReward } from '@/lib/invite-reward';
 
 export interface SyncResult {
@@ -40,7 +37,7 @@ export async function syncVideoTask(taskId: string): Promise<SyncResult> {
   }
 
   try {
-    const remote = await queryHailuoVideoTask(taskId, task.account_index);
+    const remote = await queryVideoTask(taskId, task.account_index);
 
     // 上游处理中
     if (remote.status === 'Processing' || remote.status === 'Submitted' || remote.status === 'Queued') {
@@ -56,7 +53,7 @@ export async function syncVideoTask(taskId: string): Promise<SyncResult> {
     if (failedStatuses.some((s) => remote.status.toLowerCase().includes(s.toLowerCase()))) {
       updateVideoTask(taskId, {
         status: 'Failed',
-        error_message: remote.status,
+        error_message: remote.errorMessage || remote.status,
         last_queried_at: Math.floor(Date.now() / 1000),
       });
       return { task: getVideoTaskByTaskId(taskId)!, settled: true };
@@ -64,19 +61,10 @@ export async function syncVideoTask(taskId: string): Promise<SyncResult> {
 
     // 上游成功
     if (remote.status.toLowerCase().includes('success')) {
-      let downloadUrl: string | null = null;
-      if (remote.fileId) {
-        try {
-          const file = await retrieveHailuoFile(remote.fileId, task.account_index);
-          downloadUrl = file.downloadUrl;
-        } catch (e) {
-          console.error('[video-sync] retrieve file failed', e);
-        }
-      }
       updateVideoTask(taskId, {
         status: 'Success',
         file_id: remote.fileId,
-        download_url: downloadUrl,
+        download_url: remote.downloadUrl,
         last_queried_at: Math.floor(Date.now() / 1000),
       });
       const updated = getVideoTaskByTaskId(taskId)!;
@@ -108,11 +96,14 @@ export async function syncVideoTask(taskId: string): Promise<SyncResult> {
 }
 
 async function pullDownloadUrl(task: VideoTask): Promise<VideoTask> {
-  if (!task.file_id) return task;
   try {
-    const file = await retrieveHailuoFile(task.file_id, task.account_index);
-    updateVideoTask(task.task_id, { download_url: file.downloadUrl });
-    task.download_url = file.downloadUrl;
+    const remote = await queryVideoTask(task.task_id, task.account_index);
+    if (remote.downloadUrl) {
+      updateVideoTask(task.task_id, {
+        file_id: remote.fileId,
+        download_url: remote.downloadUrl,
+      });
+    }
   } catch (e: any) {
     console.error('[video-sync] pull download url failed', e);
     updateVideoTask(task.task_id, {

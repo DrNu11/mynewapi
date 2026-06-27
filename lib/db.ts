@@ -601,6 +601,13 @@ export function getVideoTaskByTaskId(taskId: string): VideoTask | null {
   );
 }
 
+export function listVideoTasksByCardId(cardId: number, limit = 50): VideoTask[] {
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+  return db()
+    .prepare('SELECT * FROM video_tasks WHERE card_id = ? ORDER BY created_at DESC LIMIT ?')
+    .all(cardId, safeLimit) as VideoTask[];
+}
+
 export function updateVideoTask(
   taskId: string,
   patch: Partial<Pick<VideoTask, 'status' | 'file_id' | 'download_url' | 'error_message' | 'last_query_error' | 'query_error_count' | 'last_queried_at'>>
@@ -970,7 +977,7 @@ export function markSubmissionUncertain(opId: string, attemptId: string, data: {
       data.upstream_account_index,
       data.reservation_id,
       data.recovery_payload_json,
-      '本地落库失败: MiniMax已返回task_id但DB写入失败',
+      '本地落库失败: 视频上游已返回task_id但DB写入失败',
       now,
       opId,
     );
@@ -982,7 +989,7 @@ export function markSubmissionUncertain(opId: string, attemptId: string, data: {
 }
 
 /**
- * MiniMax 已返回 task_id 但本地 DB 落库失败时,保存上游信息供 reconcile 恢复。
+ * 视频上游已返回 task_id 但本地 DB 落库失败时,保存上游信息供 reconcile 恢复。
  * recovery_payload_json 仅保存 model/prompt/duration/resolution/quota_source,不保存图片 Data URL。
  * @deprecated 请使用原子函数 markSubmissionUncertain()
  */
@@ -1008,7 +1015,7 @@ export function recordRecoverableUncertainSubmission(opId: string, data: {
     data.upstream_account_index,
     data.reservation_id,
     data.recovery_payload_json,
-    '本地落库失败: MiniMax已返回task_id但DB写入失败',
+    '本地落库失败: 视频上游已返回task_id但DB写入失败',
     now,
     opId,
   );

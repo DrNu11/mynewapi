@@ -1,23 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAccountVideoCounts, getCardByCode, getVideoQuotaUsedBySource, countReservedBySource, markExpiredCards, todayStartSeconds } from '@/lib/db';
-import { getAccountsTotalQuota, HAILUO_ACCOUNTS } from '@/lib/minimax-video';
+import { getAccountVideoCounts, getCardByCode, getVideoQuotaUsedBySource, countReservedBySource, markExpiredCards } from '@/lib/db';
+import {
+  getVideoProviderTargets,
+  getVideoProviderTotalQuota,
+  isNewApiVideoConfigured,
+} from '@/lib/video-provider';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function buildGlobalQuota() {
   const counts = getAccountVideoCounts();
-  const totalQuota = getAccountsTotalQuota();
+  const totalQuota = getVideoProviderTotalQuota();
   const totalUsed = counts ? Object.values(counts).reduce((s, c) => s + c, 0) : 0;
+  const targets = getVideoProviderTargets();
   return {
+    provider: isNewApiVideoConfigured() ? 'newapi' : 'minimax_direct',
     global_quota_total: totalQuota,
     global_quota_used: totalUsed,
-    global_quota_remaining: Math.max(0, totalQuota - totalUsed),
-    accounts: HAILUO_ACCOUNTS.map((a) => ({
+    global_quota_remaining: totalQuota === null ? null : Math.max(0, totalQuota - totalUsed),
+    accounts: targets.map((a) => ({
       index: a.index,
-      quota: a.quota,
+      quota: totalQuota === null ? null : a.quota,
       used: counts[a.index] || 0,
-      remaining: Math.max(0, a.quota - (counts[a.index] || 0)),
+      remaining: totalQuota === null ? null : Math.max(0, a.quota - (counts[a.index] || 0)),
     })),
   };
 }

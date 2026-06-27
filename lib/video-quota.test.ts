@@ -44,6 +44,9 @@ function makeCard(code: string, videoQuota = 1, bonusQuota = 0, status = 'unused
     plan_days: 7,
     category: 'deepseek',
     rph: 0,
+    rph_bonus: 0,
+    rph_bonus_reason: null,
+    rph_bonus_at: null,
     video_quota: videoQuota,
     video_bonus_quota: bonusQuota,
     pool: null,
@@ -124,6 +127,19 @@ describe('reserveVideoCapacity', () => {
     expect(result.accountIndex).toBeGreaterThanOrEqual(0);
     expect(result.attemptId).toBeTruthy();
     expect(result.reservationId).toBeGreaterThan(0);
+  });
+
+  test('activated 卡仍可使用尚未消耗的基础视频额度', () => {
+    makeCard('TEST-ACTV-BASE-0001', 1, 0, 'activated');
+    const card = getCardByCode('TEST-ACTV-BASE-0001');
+
+    const result = reserveVideoCapacity({
+      operationId: 'op-activated-base-01',
+      cardId: card.id,
+      payloadHash: 'activated-base',
+    });
+
+    expect(result.quotaSource).toBe('base');
   });
 
   test('同卡最后 1 次额度,第二次 reserve 应失败', () => {

@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { finalizeVideoSubmission, getAccountVideoCounts, getCardByCode, getVideoQuotaUsedBySource, markExpiredCards, markReservationUncertain, markSubmissionUncertain, releaseReservation, updateVideoCreateOperation, checkRateLimit } from '@/lib/db';
 import {
-  createHailuoVideoTask,
-  getAccountsTotalQuota,
-  HAILUO_ACCOUNTS,
   isHailuoDuration,
   isHailuoModel,
   isHailuoResolution,
 } from '@/lib/minimax-video';
+import {
+  createVideoTask,
+  getVideoProviderTargets,
+  getVideoProviderTotalQuota,
+  isNewApiVideoConfigured,
+} from '@/lib/video-provider';
+import { toPublicVideoTask } from '@/lib/video-public';
 import { reserveVideoCapacity, type ReservationResult, QuotaError } from '@/lib/video-quota';
 import { isRateLimitError, isNetworkError } from '@/lib/video-errors';
 import { createHash } from 'crypto';
@@ -100,12 +104,12 @@ export async function POST(req: NextRequest) {
     return deny(e?.message || '预占失败', 500);
   }
 
-  // Phase 2: 循环调用 MiniMax — 覆盖 reserve + create, 最多尝试账号数量次
+  // Phase 2: 提交到视频 provider。NewAPI 自行完成渠道选择;直连回退仍支持账号切换。
   let created: { taskId: string; accountIndex: number } | null = null;
 
-  for (let attempt = 0; attempt < HAILUO_ACCOUNTS.length; attempt++) {
+  for (let attempt = 0; attempt < getVideoProviderTargets().length; attempt++) {
     try {
-      created = await createHailuoVideoTask({
+      created = await createVideoTask({
         model: model as any,
         prompt,
         firstFrameImage,
@@ -144,7 +148,7 @@ export async function POST(req: NextRequest) {
           if (re instanceof QuotaError && re.code === 'DUPLICATE_OPERATION') break;
           // 无更多可用账号
           updateVideoCreateOperation(operationId, { status: 'failed', last_error: '所有账号均限流或配额不足' });
-          return deny('所有海螺账号均不可用,请稍后重试', 429);
+          return deny('视频生成渠道暂时不可用,请稍后重试', 429);
         }
         continue; // 用新账号重试
       }
@@ -157,8 +161,8 @@ export async function POST(req: NextRequest) {
   }
 
   if (!created) {
-    updateVideoCreateOperation(operationId, { status: 'failed', last_error: '所有账号均限流或配额不足' });
-    return deny('所有海螺账号均不可用,请稍后重试', 429);
+    updateVideoCreateOperation(operationId, { status: 'failed', last_error: '视频生成渠道限流或配额不足' });
+    return deny('视频生成渠道暂时不可用,请稍后重试', 429);
   }
 
   // Phase 3: 明确成功 → 原子落库
@@ -185,7 +189,7 @@ export async function POST(req: NextRequest) {
       last_queried_at: null,
     }, reservation.reservationId);
   } catch (e: any) {
-    // MiniMax 已返回 task_id 但本地 DB 落库失败 → 原子保存恢复信息
+    // provider 已返回 task_id 但本地 DB 落库失败 → 原子保存恢复信息
     markSubmissionUncertain(operationId, reservation.attemptId, {
       upstream_task_id: created.taskId,
       upstream_account_index: created.accountIndex,
@@ -235,17 +239,15 @@ export async function POST(req: NextRequest) {
   const baseUsed = getVideoQuotaUsedBySource(card.id, 'base');
   const bonusUsed = getVideoQuotaUsedBySource(card.id, 'invite_bonus');
   const counts = getAccountVideoCounts();
-  const totalQuota = getAccountsTotalQuota();
+  const totalQuota = getVideoProviderTotalQuota();
   const globalUsed = counts ? Object.values(counts).reduce((s, c) => s + c, 0) : 0;
+  const providerTargets = getVideoProviderTargets();
 
   return NextResponse.json({
     success: true,
     data: {
+      ...toPublicVideoTask(task),
       operation_id: operationId,
-      task_id: task.task_id,
-      status: task.status,
-      created_at: task.created_at,
-      account_index: created.accountIndex,
       quota_source: reservation.quotaSource,
       base: {
         total: card.video_quota,
@@ -257,14 +259,15 @@ export async function POST(req: NextRequest) {
         used: bonusUsed,
         remaining: Math.max(0, card.video_bonus_quota - bonusUsed),
       },
+      provider: isNewApiVideoConfigured() ? 'newapi' : 'minimax_direct',
       global_quota_total: totalQuota,
       global_quota_used: globalUsed,
-      global_quota_remaining: Math.max(0, totalQuota - globalUsed),
-      accounts: HAILUO_ACCOUNTS.map((a) => ({
+      global_quota_remaining: totalQuota === null ? null : Math.max(0, totalQuota - globalUsed),
+      accounts: providerTargets.map((a) => ({
         index: a.index,
-        quota: a.quota,
+        quota: totalQuota === null ? null : a.quota,
         used: counts[a.index] || 0,
-        remaining: Math.max(0, a.quota - (counts[a.index] || 0)),
+        remaining: totalQuota === null ? null : Math.max(0, a.quota - (counts[a.index] || 0)),
       })),
     },
   });

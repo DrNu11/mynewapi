@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCardByCode, getVideoTaskByTaskId, checkRateLimit } from '@/lib/db';
 import { syncVideoTask } from '@/lib/video-sync';
 import { clientIp } from '@/lib/client-ip';
+import { toPublicVideoTask } from '@/lib/video-public';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,5 +41,5 @@ export async function POST(req: NextRequest) {
 
   // 调用 syncVideoTask 进行状态同步和奖励结算(对终态幂等)
   const { task: updated } = await syncVideoTask(taskId);
-  return NextResponse.json({ success: true, data: updated });
+  return NextResponse.json({ success: true, data: toPublicVideoTask(updated) });
 }
