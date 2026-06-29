@@ -18,7 +18,9 @@ import {
   getEffectiveRequestQuota,
   getEffectiveRph,
   countCardBillableRequestsSince,
+  isGlmRequestQuotaCard,
 } from '@/lib/db';
+import { getGlmPlanName } from '@/lib/glm-plans';
 import { isCategory, legacyModels, modelsForCategory } from '@/lib/categories';
 import {
   insertAuditEntry,
@@ -523,15 +525,15 @@ async function handle(req: NextRequest, pathParts: string[]) {
     }
   }
 
-  // 4.2 GLM-5.2 日卡总请求次数额度:基础 500 次,好评后 1000 次。
-  if (card.category === 'glm' && card.plan === '1d') {
+  // 4.2 GLM-5.2 日卡/周卡/月卡总请求次数额度:基础 500 次,好评后 1000 次。
+  if (isGlmRequestQuotaCard(card)) {
     const effectiveRequestQuota = getEffectiveRequestQuota(card);
     if (effectiveRequestQuota !== null && card.activated_at) {
       const usedRequests = countCardBillableRequestsSince(card.id, card.activated_at);
       if (usedRequests >= effectiveRequestQuota) {
         return jsonError(
           429,
-          '该 GLM-5.2 日卡请求次数已用完。',
+          `该 GLM-5.2 ${getGlmPlanName(card.plan)}请求次数已用完。`,
           'quota_exceeded',
           'glm_request_quota_exceeded',
         );

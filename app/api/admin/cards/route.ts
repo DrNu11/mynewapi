@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/auth';
 import {
-  GLM_BASE_REQUEST_QUOTA,
   getGlmRequestUsage,
   insertCard,
   listCards,
@@ -11,6 +10,7 @@ import {
   getCurrentHourRequestCountsByCardIds,
   listRenewalRelationsForCardIds,
 } from '@/lib/db';
+import { getGlmBaseRequestQuota, isGlmPlanId } from '@/lib/glm-plans';
 import { generateCodes } from '@/lib/codes';
 import { isPlanId, PLAN_BY_ID, makePlanFromDays, MIN_CUSTOM_DAYS } from '@/lib/plans';
 import { CATEGORIES, isCategory, type Category } from '@/lib/categories';
@@ -115,8 +115,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: '数量须为 1-500' }, { status: 400 });
   }
   const cat: Category = category;
-  if (cat === 'glm' && planMeta.id !== '1d') {
-    return NextResponse.json({ success: false, message: 'GLM 当前仅支持 GLM-5.2 日卡(1d)' }, { status: 400 });
+  if (cat === 'glm' && !isGlmPlanId(planMeta.id)) {
+    return NextResponse.json({ success: false, message: 'GLM 仅支持日卡(1d)、周卡(7d)和月卡(30d)' }, { status: 400 });
   }
   // plan.rphOverride 优先(0 = 不限速),没设置则用 category.defaultRPH
   const rph = planMeta.rphOverride !== undefined ? planMeta.rphOverride : CATEGORIES[cat].defaultRPH;
@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
         rph_bonus: 0,
         rph_bonus_reason: null,
         rph_bonus_at: null,
-        request_quota: cat === 'glm' && planMeta.id === '1d' ? GLM_BASE_REQUEST_QUOTA : null,
+        request_quota: cat === 'glm' ? getGlmBaseRequestQuota(planMeta.id) : null,
         request_bonus_quota: 0,
         request_bonus_reason: null,
         request_bonus_at: null,

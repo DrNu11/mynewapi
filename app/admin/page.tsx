@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PLANS, formatDaysCN } from '@/lib/plans';
 import { CATEGORIES, CATEGORY_LIST, modelsForCategory, type Category } from '@/lib/categories';
+import { getGlmPlanName, isGlmPlanId } from '@/lib/glm-plans';
 import {
   Plus,
   RefreshCcw,
@@ -112,7 +113,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (genCategory !== 'glm') return;
-    if (genPlan !== '1d') setGenPlan('1d');
+    if (!isGlmPlanId(genPlan)) setGenPlan('1d');
     if (genCustomDays) setGenCustomDays('');
   }, [genCategory, genPlan, genCustomDays]);
 
@@ -238,6 +239,8 @@ export default function AdminDashboard() {
     const isLight = plan === '30d_light';
 
     if (category === 'glm') {
+      const planDays = PLANS.find((item) => item.id === plan)?.days ?? 1;
+      const planName = getGlmPlanName(plan);
       return codes.map((code) => {
         return `卡密：${code}
 
@@ -253,7 +256,7 @@ https://card.nassaapi.xyz/v1
 glm-5.2
 
 套餐说明：
-GLM-5.2 日卡，24 小时有效。
+GLM-5.2 ${planName}，${formatDaysCN(planDays)}有效。
 基础可请求 500 次。
 好评后可额外增加 500 次请求额度。
 好评后总共可请求 1000 次。
@@ -694,12 +697,12 @@ ${modelsList}
               <select
                 value={genPlan}
                 onChange={(e) => setGenPlan(e.target.value)}
-                disabled={customDaysActive || genCategory === 'glm'}
+                disabled={customDaysActive}
                 className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-brand-500 focus:outline-none disabled:opacity-50"
               >
-                {PLANS.map((p) => (
+                {PLANS.filter((p) => genCategory !== 'glm' || isGlmPlanId(p.id)).map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.label}
+                    {genCategory === 'glm' ? `GLM ${getGlmPlanName(p.id)}` : p.label}
                   </option>
                 ))}
               </select>
@@ -785,7 +788,11 @@ ${modelsList}
           >
             {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             生成 {genCount} 个 ·{' '}
-            {customDaysActive ? formatDaysCN(customDaysNum) : PLANS.find((p) => p.id === genPlan)?.label || genPlan}
+            {customDaysActive
+              ? formatDaysCN(customDaysNum)
+              : genCategory === 'glm'
+                ? `GLM ${getGlmPlanName(genPlan)}`
+                : PLANS.find((p) => p.id === genPlan)?.label || genPlan}
           </button>
 
           {newCodes.length > 0 && (
@@ -983,7 +990,7 @@ ${modelsList}
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.activated_at)}</td>
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.expires_at)}</td>
                     <td className="px-3 py-2.5 text-xs">
-                      {c.category === 'glm' && c.plan === '1d' ? (
+                      {c.category === 'glm' && isGlmPlanId(c.plan) ? (
                         <div className="space-y-0.5">
                           <span
                             className={`font-mono ${(c.used_requests || 0) >= (c.effective_request_quota || 0)
@@ -1138,8 +1145,8 @@ ${modelsList}
                             </button>
                           </>
                         )}
-                        {/* GLM 请求额度奖励: 仅 GLM-5.2 日卡,好评 +500 次 */}
-                        {c.category === 'glm' && c.plan === '1d' && c.status !== 'expired' && c.status !== 'disabled' && (
+                        {/* GLM 日卡/周卡/月卡请求额度奖励:好评 +500 次 */}
+                        {c.category === 'glm' && isGlmPlanId(c.plan) && c.status !== 'expired' && c.status !== 'disabled' && (
                           c.request_bonus_quota > 0 ? (
                             <>
                               <button

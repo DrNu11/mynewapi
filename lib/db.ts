@@ -1,6 +1,13 @@
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
+import {
+  GLM_BASE_REQUEST_QUOTA,
+  GLM_REVIEW_BONUS_REQUEST_QUOTA,
+  isGlmPlanId,
+} from './glm-plans';
+
+export { GLM_BASE_REQUEST_QUOTA, GLM_REVIEW_BONUS_REQUEST_QUOTA } from './glm-plans';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -1275,11 +1282,8 @@ export function getDeepSeekLightWeightedUsage(card: {
   };
 }
 
-export const GLM_BASE_REQUEST_QUOTA = 500;
-export const GLM_REVIEW_BONUS_REQUEST_QUOTA = 500;
-
 export function isGlmRequestQuotaCard(card: { category: string | null; plan: string }): boolean {
-  return card.category === 'glm' && card.plan === '1d';
+  return card.category === 'glm' && isGlmPlanId(card.plan);
 }
 
 export function getBaseRequestQuota(card: {

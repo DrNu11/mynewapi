@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2, Film, Presentation } from 'lucide-react';
 import { formatDaysCN } from '@/lib/plans';
+import { getGlmPlanName, isGlmPlanId } from '@/lib/glm-plans';
 import PublicStatusPanel from '@/components/public-status-panel';
 
 interface ResultData {
@@ -390,8 +391,8 @@ export default function ResultPage() {
 
   // expires_at 为 null = 尊享套餐(永不过期,只受额度约束)
   const noExpire = data.expires_at === null;
-  const isGlmDayCard = data.category === 'glm' && data.plan === '1d';
-  const glmRequestQuota = usage?.requestQuota ?? data.request_quota ?? (isGlmDayCard ? 500 : null);
+  const isGlmQuotaCard = data.category === 'glm' && isGlmPlanId(data.plan);
+  const glmRequestQuota = usage?.requestQuota ?? data.request_quota ?? (isGlmQuotaCard ? 500 : null);
   const glmBonusQuota = usage?.requestBonusQuota ?? data.request_bonus_quota ?? 0;
   const glmEffectiveQuota =
     usage?.effectiveRequestQuota ?? data.effective_request_quota ?? (
@@ -429,12 +430,12 @@ export default function ResultPage() {
         </div>
 
         <h1 className="mt-4 text-3xl font-bold text-slate-100">
-          {isGlmDayCard
-            ? 'GLM-5.2 日卡已开通'
+          {isGlmQuotaCard
+            ? `GLM-5.2 ${getGlmPlanName(data.plan)}已开通`
             : `${data.category_label ? `${data.category_label} · ` : ''}${formatDaysCN(data.plan_days)}畅用已开通`}
         </h1>
         <p className="mt-2 text-sm text-slate-400">
-          {isGlmDayCard
+          {isGlmQuotaCard
             ? '支持 GLM-5.2 模型，适合智能体、代码生成、长文本处理和日常 AI 对话。'
             : '请妥善保存以下信息,粘贴到 Cherry Studio / Claude Code / Cursor 等工具即可使用'}
         </p>
@@ -647,8 +648,8 @@ export default function ResultPage() {
           );
         })()}
 
-        {/* GLM-5.2 日卡总请求额度 */}
-        {isGlmDayCard && (
+        {/* GLM-5.2 日卡/周卡/月卡总请求额度 */}
+        {isGlmQuotaCard && (
           <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-sm font-medium text-emerald-200">
@@ -677,7 +678,7 @@ export default function ResultPage() {
 
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-emerald-500/20 bg-slate-950/40 px-4 py-3">
-                <div className="text-xs text-emerald-200/70">24 小时有效</div>
+                <div className="text-xs text-emerald-200/70">{formatDaysCN(data.plan_days)}有效</div>
                 <div className="mt-1 font-mono text-lg font-bold text-emerald-100">
                   基础 {glmRequestQuota ?? 500} 次
                 </div>
@@ -731,7 +732,7 @@ export default function ResultPage() {
         )}
 
         {/* 速率限制 + 实时用量(轻度月卡/GLM 总请求额度卡不显示每小时限制) */}
-        {data.rph > 0 && data.plan !== '30d_light' && !isGlmDayCard && (
+        {data.rph > 0 && data.plan !== '30d_light' && !isGlmQuotaCard && (
           <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/5 p-5">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-sm font-medium text-blue-200">
@@ -946,7 +947,7 @@ export default function ResultPage() {
                   {data.category_label ?? '—'}
                 </div>
                 <div className="mt-0.5 text-[10px] text-slate-500">
-                  {isGlmDayCard
+                  {isGlmQuotaCard
                     ? `基础 ${glmRequestQuota ?? 500} 次 · 好评 +500 次`
                     : data.plan === '30d_light'
                       ? 'flash 1点/次 · pro 3点/次'
@@ -1294,7 +1295,7 @@ claude`}
         </details>
 
         {/* ============== 一键续费 panel — 仅有期限的卡显示 ============== */}
-        {!noExpire && data.category && !isGlmDayCard && (
+        {!noExpire && data.category && (
           <div className="mt-8 rounded-2xl border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-amber-500/10 p-6 shadow-xl shadow-amber-500/5">
             <div className="flex items-start gap-3">
               <div className="rounded-xl bg-amber-500/20 p-2.5">

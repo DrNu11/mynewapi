@@ -78,9 +78,9 @@ export const CATEGORIES: Record<Category, CategoryMeta> = {
   glm: {
     id: 'glm',
     prefix: 'GL',
-    label: 'GLM-5.2 日卡',
+    label: 'GLM-5.2 套餐',
     shortLabel: 'GLM',
-    description: 'GLM-5.2 日卡,24 小时有效,基础 500 次请求',
+    description: 'GLM-5.2 日卡/周卡/月卡,基础 500 次请求',
     modelsEnv: 'MODELS_GLM',
     defaultModels: 'glm-5.2',
     hasCodex: false,

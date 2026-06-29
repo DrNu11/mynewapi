@@ -2,6 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import { CATEGORIES, categoryFromCode, isCategory, modelsForCategory } from './categories';
 import {
+  GLM_PLAN_IDS,
+  getGlmBaseRequestQuota,
+  isGlmPlanId,
+} from './glm-plans';
+import { PLAN_BY_ID } from './plans';
+import {
   GLM_BASE_REQUEST_QUOTA,
   GLM_REVIEW_BONUS_REQUEST_QUOTA,
   applyGlmReviewBonus,
@@ -34,14 +40,16 @@ function insertTestCard(opts: {
   rphBonus?: number;
 }): { id: number; code: string; activatedAt: number; sk: string } {
   const now = nowSec();
+  const plan = opts.plan ?? '1d';
+  const planDays = (PLAN_BY_ID as Record<string, { days: number }>)[plan]?.days ?? 1;
   const code =
     opts.code ??
     `${opts.category === 'glm' ? 'GL' : 'DE'}-TEST-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   const sk = `sk-glm-test-${Math.random().toString(36).slice(2, 10)}`;
   const id = insertCard({
     code,
-    plan: opts.plan ?? '1d',
-    plan_days: 1,
+    plan,
+    plan_days: planDays,
     category: opts.category,
     rph: 500,
     rph_bonus: opts.rphBonus ?? 0,
@@ -57,7 +65,7 @@ function insertTestCard(opts: {
     status: opts.status ?? 'activated',
     created_at: now,
     activated_at: now,
-    expires_at: now + DAY,
+    expires_at: now + planDays * DAY,
     claimed_at: null,
     newapi_user_id: null,
     newapi_token_id: 999,
@@ -95,6 +103,13 @@ describe('GLM category', () => {
     expect(categoryFromCode('GL-ABCD-EFGH-JKLM')).toBe('glm');
     expect(modelsForCategory('glm')).toEqual(['glm-5.2']);
   });
+
+  it('supports day, week, and month plans with the same fixed request quota', () => {
+    expect(GLM_PLAN_IDS).toEqual(['1d', '7d', '30d']);
+    expect(GLM_PLAN_IDS.every(isGlmPlanId)).toBe(true);
+    expect(GLM_PLAN_IDS.map((plan) => PLAN_BY_ID[plan].days)).toEqual([1, 7, 30]);
+    expect(GLM_PLAN_IDS.map(getGlmBaseRequestQuota)).toEqual([500, 500, 500]);
+  });
 });
 
 describe('GLM request quota', () => {
@@ -104,6 +119,16 @@ describe('GLM request quota', () => {
     expect(getBaseRequestQuota(card)).toBe(500);
     expect(card.request_bonus_quota).toBe(0);
     expect(getEffectiveRequestQuota(card)).toBe(500);
+  });
+
+  it.each(['7d', '30d'])('keeps the fixed 500-request quota for the %s plan', (plan) => {
+    const { code } = insertTestCard({ category: 'glm', plan });
+    const card = db().prepare('SELECT * FROM cards WHERE code = ?').get(code) as Card;
+
+    expect(card.plan_days).toBe(PLAN_BY_ID[plan as '7d' | '30d'].days);
+    expect(getBaseRequestQuota(card)).toBe(500);
+    expect(getGlmRequestUsage(card).effectiveRequestQuota).toBe(500);
+    expect(isGlmReviewBonusEligible(card)).toBe(true);
   });
 
   it('applies +500 review bonus without touching RPH bonus', () => {
