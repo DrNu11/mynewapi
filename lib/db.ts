@@ -1886,6 +1886,7 @@ export function applyRenewal(args: {
   newapiUserId: number | null;
   renewalIp: string | null;
 }): number {
+  // 续费的唯一业务增益是延长有效期。请求额度、奖励次数和 RPH 均不得转移或增加。
   const now = Math.floor(Date.now() / 1000);
   const tx = db().transaction(() => {
     const r = db().prepare(`
@@ -1920,15 +1921,6 @@ export function applyRenewal(args: {
       args.renewalIp, args.renewalCardId);
     if (u2.changes !== 1) throw new Error('renewal card finalize failed (state changed?)');
 
-    // 续费卡若在激活前就已获得 RPH 加成，同步到共享该 token 的所有卡
-    // 因为 getCardByTokenKey 返回最小 id 行，只加在续费卡上代理侧读不到。
-    const renewalCard = db().prepare('SELECT rph_bonus, rph_bonus_reason, rph_bonus_at FROM cards WHERE id = ?').get(args.renewalCardId) as { rph_bonus: number; rph_bonus_reason: string | null; rph_bonus_at: number | null } | undefined;
-    if (renewalCard && renewalCard.rph_bonus > 0) {
-      db().prepare(
-        'UPDATE cards SET rph_bonus = ?, rph_bonus_reason = ?, rph_bonus_at = ? WHERE newapi_token_key = ?'
-      ).run(renewalCard.rph_bonus, renewalCard.rph_bonus_reason, renewalCard.rph_bonus_at, args.newapiTokenKey);
-    }
-
     return Number(r.lastInsertRowid);
   });
   return tx() as number;
@@ -1946,6 +1938,55 @@ export function listRenewalsForOriginal(originalCardId: number): Renewal[] {
   return db()
     .prepare('SELECT * FROM renewals WHERE original_card_id = ? ORDER BY renewed_at DESC')
     .all(originalCardId) as Renewal[];
+}
+
+export interface RenewalRelation extends Renewal {
+  original_card_code: string;
+  renewal_card_code: string;
+}
+
+export interface CardRenewalRelations {
+  /** 这张卡作为续费卡时,它续给了哪张原卡。 */
+  renewed_from: RenewalRelation | null;
+  /** 这张卡作为原卡时,有哪些卡续给了它。 */
+  renewed_by: RenewalRelation[];
+}
+
+/**
+ * 批量查询卡密的双向续费关系,供管理后台列表展示。
+ * 一次 JOIN 同时带回原卡和续费卡代码,避免逐行 N+1 查询。
+ */
+export function listRenewalRelationsForCardIds(
+  cardIds: number[],
+): Record<number, CardRenewalRelations> {
+  const uniqueIds = [...new Set(cardIds.filter((id) => Number.isInteger(id) && id > 0))];
+  const result: Record<number, CardRenewalRelations> = Object.fromEntries(
+    uniqueIds.map((id) => [id, { renewed_from: null, renewed_by: [] }]),
+  );
+  if (uniqueIds.length === 0) return result;
+
+  const placeholders = uniqueIds.map(() => '?').join(',');
+  const rows = db()
+    .prepare(`
+      SELECT r.*,
+             original.code AS original_card_code,
+             renewal.code AS renewal_card_code
+      FROM renewals r
+      JOIN cards original ON original.id = r.original_card_id
+      JOIN cards renewal ON renewal.id = r.renewal_card_id
+      WHERE r.original_card_id IN (${placeholders})
+         OR r.renewal_card_id IN (${placeholders})
+      ORDER BY r.renewed_at DESC, r.id DESC
+    `)
+    .all(...uniqueIds, ...uniqueIds) as RenewalRelation[];
+
+  for (const row of rows) {
+    const original = result[row.original_card_id];
+    if (original) original.renewed_by.push(row);
+    const renewal = result[row.renewal_card_id];
+    if (renewal) renewal.renewed_from = row;
+  }
+  return result;
 }
 
 // ===============================================================================

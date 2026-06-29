@@ -9,6 +9,7 @@ import {
   markExpiredCards,
   getStats,
   getCurrentHourRequestCountsByCardIds,
+  listRenewalRelationsForCardIds,
 } from '@/lib/db';
 import { generateCodes } from '@/lib/codes';
 import { isPlanId, PLAN_BY_ID, makePlanFromDays, MIN_CUSTOM_DAYS } from '@/lib/plans';
@@ -37,6 +38,7 @@ export async function GET(req: NextRequest) {
   const cards = listCards({ status, plan, pool, q, limit, offset });
   const stats = getStats();
   const pools = listPools();
+  const renewalRelations = listRenewalRelationsForCardIds(cards.map((c) => c.id));
 
   // 给每张卡附上"当前自然小时请求数",与 RPH 限速口径保持一致。
   const counts = getCurrentHourRequestCountsByCardIds(cards.map((c) => c.id));
@@ -48,6 +50,8 @@ export async function GET(req: NextRequest) {
       used_requests: glmUsage.usedRequests,
       effective_request_quota: glmUsage.effectiveRequestQuota,
       remaining_requests: glmUsage.remainingRequests,
+      renewed_from: renewalRelations[c.id]?.renewed_from ?? null,
+      renewed_by: renewalRelations[c.id]?.renewed_by ?? [],
     };
   });
 

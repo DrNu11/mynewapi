@@ -50,6 +50,20 @@ interface CardRow {
   disable_reason: string | null;
   notes: string | null;
   pool: string | null;
+  renewed_from: RenewalRelation | null;
+  renewed_by: RenewalRelation[];
+}
+
+interface RenewalRelation {
+  id: number;
+  original_card_id: number;
+  original_card_code: string;
+  renewal_card_id: number;
+  renewal_card_code: string;
+  renewed_at: number;
+  before_expires_at: number;
+  after_expires_at: number;
+  added_days: number;
 }
 
 interface Stats {
@@ -887,6 +901,7 @@ ${modelsList}
                   <th className="px-3 py-2.5 font-medium" title="商家内部号池标签">号池</th>
                   <th className="px-3 py-2.5 font-medium" title="激活时 token 归属的 NewAPI 用户">NewAPI用户</th>
                   <th className="px-3 py-2.5 font-medium">套餐</th>
+                  <th className="min-w-56 px-3 py-2.5 font-medium">续费关系</th>
                   <th className="px-3 py-2.5 font-medium">状态</th>
                   <th className="px-3 py-2.5 font-medium">创建时间</th>
                   <th className="px-3 py-2.5 font-medium">激活时间</th>
@@ -899,7 +914,7 @@ ${modelsList}
               <tbody>
                 {cards.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={12} className="px-3 py-12 text-center text-sm text-slate-500">
+                    <td colSpan={13} className="px-3 py-12 text-center text-sm text-slate-500">
                       暂无数据
                     </td>
                   </tr>
@@ -927,6 +942,42 @@ ${modelsList}
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-slate-300">{formatDaysCN(c.plan_days)}</td>
+                    <td className="px-3 py-2.5 text-xs">
+                      {c.renewed_from || c.renewed_by.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {c.renewed_from && (
+                            <div className="rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-sky-200">
+                              <div className="font-medium">续费卡 → 原卡</div>
+                              <div className="mt-0.5 font-mono text-[11px] text-sky-100">
+                                {c.renewed_from.original_card_code}
+                              </div>
+                              <div className="mt-0.5 text-[10px] text-slate-400">
+                                +{formatDaysCN(c.renewed_from.added_days)} · {fmtTime(c.renewed_from.renewed_at)}
+                              </div>
+                            </div>
+                          )}
+                          {c.renewed_by.length > 0 && (
+                            <div className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-emerald-200">
+                              <div className="font-medium">原卡 · 已续 {c.renewed_by.length} 次</div>
+                              <div className="mt-1 space-y-1">
+                                {c.renewed_by.map((relation) => (
+                                  <div key={relation.id}>
+                                    <div className="font-mono text-[11px] text-emerald-100">
+                                      ← {relation.renewal_card_code}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">
+                                      +{formatDaysCN(relation.added_days)} · {fmtTime(relation.renewed_at)}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5">{statusBadge(c.status)}</td>
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.created_at)}</td>
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.activated_at)}</td>

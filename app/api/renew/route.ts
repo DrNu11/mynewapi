@@ -10,12 +10,9 @@ import {
   type Card,
 } from '@/lib/db';
 import { isValidCodeFormat, normalizeCode } from '@/lib/codes';
-import {
-  addTokenQuotaUSD,
-  getTokenById,
-  updateTokenExpiredTime,
-} from '@/lib/newapi';
+import { getTokenById, updateTokenExpiredTime } from '@/lib/newapi';
 import { isPlanId, PLAN_BY_ID } from '@/lib/plans';
+import { validateRenewalCompatibility } from '@/lib/renewal-policy';
 import {
   CATEGORIES,
   categoryFromCode,
@@ -25,13 +22,6 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const GPT_WEEKLY_QUOTA_USD = 1000;
-
-function renewalQuotaUSD(category: Category | null, plan: string): number | null {
-  if (category === 'gpt' && plan === '7d') return GPT_WEEKLY_QUOTA_USD;
-  return null;
-}
 
 function clientIp(req: NextRequest): string {
   const xff = req.headers.get('x-forwarded-for');
@@ -112,10 +102,6 @@ export async function POST(req: NextRequest) {
   if (!isCategory(orig.category)) {
     return fail('老 NASSA-* 卡密暂不支持续费,请联系客服重新发卡', 400);
   }
-  if (orig.category === 'glm') {
-    return fail('GLM-5.2 日卡暂不支持一键续费,请激活新的 GLM 卡密使用', 400);
-  }
-
   // ===================== 校验续费卡 =====================
   const renewal = getCardByCode(renewalCode);
   if (!renewal) return fail('续费卡密不存在', 404);
@@ -145,6 +131,9 @@ export async function POST(req: NextRequest) {
     return fail(`续费卡是 ${renewLabel},与原卡 ${origLabel} 不匹配`, 400);
   }
 
+  const compatibilityError = validateRenewalCompatibility(orig, renewal);
+  if (compatibilityError) return fail(compatibilityError, 400);
+
   // 续费卡不能是 noExpire (永久卡用作续费没意义)
   if (isPlanId(renewal.plan) && PLAN_BY_ID[renewal.plan]?.noExpire) {
     return fail('永久套餐卡密不能用作续费,请直接激活', 400);
@@ -170,8 +159,6 @@ export async function POST(req: NextRequest) {
   // ===================== 调 NewAPI 改 token expired_time =====================
   let beforeExp: number;
   let afterExp: number;
-  let quotaAdded = false;
-  const addQuotaUSD = renewalQuotaUSD(renewalCat, renewal.plan);
   try {
     // 先 GET token 验证它仍存在 + 拿当前 server 端 expired_time
     const live = await getTokenById(orig.newapi_token_id, orig.newapi_user_id);
@@ -197,10 +184,6 @@ export async function POST(req: NextRequest) {
     const r = await updateTokenExpiredTime(orig.newapi_token_id, plan.newExpire, orig.newapi_user_id);
     beforeExp = r.before;
     afterExp = r.after;
-    if (addQuotaUSD) {
-      await addTokenQuotaUSD(orig.newapi_token_id, addQuotaUSD, orig.newapi_user_id);
-      quotaAdded = true;
-    }
   } catch (e) {
     console.error('[renew] NewAPI 调用失败', e);
     releaseCardClaim(renewalCode);
@@ -238,9 +221,6 @@ export async function POST(req: NextRequest) {
     console.error('[renew] sqlite 写入失败,尝试回滚 NewAPI', e);
     try {
       await updateTokenExpiredTime(orig.newapi_token_id, beforeExp, orig.newapi_user_id);
-      if (quotaAdded && addQuotaUSD) {
-        await addTokenQuotaUSD(orig.newapi_token_id, -addQuotaUSD, orig.newapi_user_id);
-      }
       console.error('[renew] NewAPI 回滚成功 (token expired_time 改回原值)');
     } catch (rollbackErr) {
       console.error('[renew] NewAPI 回滚也失败:', rollbackErr);
