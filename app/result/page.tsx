@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2, Film, Presentation } from 'lucide-react';
+import { Copy, Check, Clock, KeyRound, Globe, ArrowLeft, BookOpen, Terminal, Zap, RefreshCw, BarChart3, ExternalLink, Sparkles, RotateCw, Loader2, CheckCircle2, Film, Presentation, Mail } from 'lucide-react';
 import { formatDaysCN } from '@/lib/plans';
 import { getGlmPlanName, isGlmPlanId } from '@/lib/glm-plans';
+import { mergeLiveCardExpiry, type LiveCardState } from '@/lib/result-live-sync';
 import PublicStatusPanel from '@/components/public-status-panel';
 
 interface ResultData {
@@ -240,6 +241,18 @@ export default function ResultPage() {
     setAlready(sessionStorage.getItem('nc_already') === '1');
   }, [router]);
 
+  const applyLiveCardState = useCallback((live: LiveCardState) => {
+    setData((current) => {
+      if (!current) return current;
+      const next = mergeLiveCardExpiry(current, live);
+      if (next === current) return current;
+
+      sessionStorage.setItem('nc_result', JSON.stringify(next));
+      localStorage.setItem('nc_cache', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   // 拉实时用量,页面留着就每 60s 自动刷新(手动刷新另走 refresh 函数)
   // 注意:所有卡密都 fetch(包括 rph=0 不限的老卡),看板需要展示累计/趋势/模型 top
   useEffect(() => {
@@ -255,6 +268,7 @@ export default function ResultPage() {
         });
         const j = await r.json();
         if (!alive || !j?.success) return;
+        applyLiveCardState(j.data);
         setUsage({
           used: j.data.used,
           rph: j.data.rph,
@@ -289,7 +303,7 @@ export default function ResultPage() {
       alive = false;
       clearInterval(t);
     };
-  }, [data?.api_key, data?.rph]);
+  }, [applyLiveCardState, data?.api_key, data?.rph]);
 
   const refreshUsage = async () => {
     if (!data?.api_key) return;
@@ -302,6 +316,7 @@ export default function ResultPage() {
       });
       const j = await r.json();
       if (j?.success) {
+        applyLiveCardState(j.data);
         setUsage({
           used: j.data.used,
           rph: j.data.rph,
@@ -1412,6 +1427,20 @@ claude`}
           <PublicStatusPanel />
         </aside>
       </div>
+
+      <a
+        href="mailto:nassababyy@gmail.com?subject=NassaAPI%20%E5%90%88%E4%BD%9C%E5%92%A8%E8%AF%A2"
+        className="fixed bottom-4 left-4 z-30 flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-xl border border-cyan-500/40 bg-slate-950/95 px-4 py-3 shadow-2xl shadow-black/40 backdrop-blur transition hover:border-cyan-300 hover:bg-slate-900"
+        aria-label="通过邮件联系 NassaAPI 商务合作"
+      >
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-300">
+          <Mail className="h-4 w-4" />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-xs font-semibold text-slate-100">商务合作 / 客户支持</span>
+          <span className="block truncate text-[11px] text-cyan-300">nassababyy@gmail.com</span>
+        </span>
+      </a>
     </main>
   );
 }

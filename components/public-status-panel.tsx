@@ -260,6 +260,13 @@ function ServiceStatusRow({ service }: { service: PublicStatusService }) {
       <div className="mt-3 grid grid-cols-2 gap-2">
         <Metric label="最近成功率" value={formatPercent(service.successRate1h)} />
         <Metric label="24h 成功率" value={formatPercent(service.successRate24h)} />
+        <div className="col-span-2 flex items-center justify-between rounded-md border border-cyan-500/25 bg-cyan-500/10 px-2.5 py-2">
+          <div>
+            <div className="text-[10px] text-cyan-200/70">缓存命中率目标</div>
+            <div className="mt-0.5 text-[10px] text-slate-500">性能优化目标</div>
+          </div>
+          <div className="font-mono text-sm font-semibold text-cyan-200">97%～98%</div>
+        </div>
         <Metric label="Token 24h" value={formatTokenCount(service.tokens24h)} />
         <Metric label="RPM" value={formatRate(rpm)} />
         <Metric label="TPM" value={formatRate(tpm)} />

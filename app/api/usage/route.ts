@@ -106,6 +106,8 @@ export async function POST(req: NextRequest) {
       remaining,
       category: card.category,
       plan: card.plan,
+      // Result 页用此字段同步后台续期/永久状态，null 表示永久。
+      expires_at: card.expires_at,
       requestQuota: requestUsage.requestQuota,
       requestBonusQuota: requestUsage.requestBonusQuota,
       effectiveRequestQuota: requestUsage.effectiveRequestQuota,
