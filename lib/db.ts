@@ -1782,14 +1782,13 @@ export function activateCard(
   `).run(Math.floor(Date.now() / 1000), expiresAt, tokenId, tokenKey, code);
 }
 
-/**
- * Admin 续期: 给已激活的卡延长到期时间, 保留原 API key 不变.
- * newExpiresAt 为新的到期时间戳(秒), 同时更新 SQLite 状态(已过期→已激活).
- * 返回更新后的 Card; 找不到返回 null.
- */
-export function extendCardExpiry(code: string, newExpiresAt: number): Card | null {
+/** Admin 到期时间管理：时间戳表示有限期，null 表示永久有效。 */
+export function setCardExpiry(code: string, newExpiresAt: number | null): Card | null {
   const card = getCardByCode(code);
   if (!card) return null;
+  if (newExpiresAt !== null && (!Number.isFinite(newExpiresAt) || newExpiresAt <= 0)) {
+    throw new Error(`非法 newExpiresAt=${newExpiresAt}`);
+  }
   db().prepare(`
     UPDATE cards
     SET expires_at = ?,

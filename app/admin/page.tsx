@@ -22,6 +22,7 @@ import {
   UserRound,
   ThumbsUp,
   RotateCcw,
+  Clock,
 } from 'lucide-react';
 
 interface CardRow {
@@ -988,7 +989,11 @@ ${modelsList}
                     <td className="px-3 py-2.5">{statusBadge(c.status)}</td>
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.created_at)}</td>
                     <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.activated_at)}</td>
-                    <td className="px-3 py-2.5 text-xs text-slate-400">{fmtTime(c.expires_at)}</td>
+                    <td className="px-3 py-2.5 text-xs text-slate-400">
+                      {c.expires_at === null && c.status === 'activated' ? (
+                        <span className="font-medium text-emerald-300">永久</span>
+                      ) : fmtTime(c.expires_at)}
+                    </td>
                     <td className="px-3 py-2.5 text-xs">
                       {c.category === 'glm' && isGlmPlanId(c.plan) ? (
                         <div className="space-y-0.5">
@@ -1326,6 +1331,7 @@ function RenewSection() {
   const [code, setCode] = useState('');
   const [days, setDays] = useState('7');
   const [renewing, setRenewing] = useState(false);
+  const [makingPermanent, setMakingPermanent] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   async function renew() {
@@ -1363,14 +1369,43 @@ function RenewSection() {
     }
   }
 
+  async function makePermanent() {
+    const trimmed = code.trim();
+    if (!trimmed) { setResult({ ok: false, msg: '请输入卡密' }); return; }
+    if (!window.confirm(`确认将 ${trimmed.toUpperCase()} 设为永久有效？\n只取消时间限制，不增加请求次数或额度。`)) return;
+    setMakingPermanent(true);
+    setResult(null);
+    try {
+      const res = await fetch('/api/admin/cards/extend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: trimmed, permanent: true }),
+      });
+      const body = await res.json();
+      if (body.success) {
+        setResult({
+          ok: true,
+          msg: `设置成功！卡密 ${body.data.card.code} 现为永久有效；请求次数和 API Key 保持不变。`,
+        });
+        setCode('');
+      } else {
+        setResult({ ok: false, msg: body.message || '设置永久有效失败' });
+      }
+    } catch (e: any) {
+      setResult({ ok: false, msg: e?.message || '网络错误' });
+    } finally {
+      setMakingPermanent(false);
+    }
+  }
+
   return (
     <section className="mt-8 rounded-xl border border-amber-500/40 bg-amber-500/5 p-5">
       <h2 className="flex items-center gap-2 text-sm font-medium text-amber-300">
         <RotateCcw className="h-4 w-4" />
-        卡密续期 (保留原 API Key)
+        卡密有效期管理 (保留原 API Key)
       </h2>
       <p className="mt-1 text-xs text-slate-400">
-        输入已激活的卡密, 延长到期时间。客户无需更换密钥。
+        输入已激活的卡密，可延长天数或设为永久有效。只修改时间，不增加请求次数，客户无需更换密钥。
       </p>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <div className="flex-1 min-w-[240px]">
@@ -1398,11 +1433,20 @@ function RenewSection() {
         </div>
         <button
           onClick={renew}
-          disabled={renewing}
+          disabled={renewing || makingPermanent}
           className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:bg-slate-700"
         >
           {renewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
           续期
+        </button>
+        <button
+          onClick={makePermanent}
+          disabled={renewing || makingPermanent}
+          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:bg-slate-700"
+          title="仅取消时间限制，不增加请求次数或额度"
+        >
+          {makingPermanent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clock className="h-4 w-4" />}
+          时间设为永久
         </button>
       </div>
       {result && (
