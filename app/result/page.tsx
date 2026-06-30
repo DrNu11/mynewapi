@@ -1430,7 +1430,7 @@ claude`}
 
       <a
         href="mailto:nassababyy@gmail.com?subject=NassaAPI%20%E5%90%88%E4%BD%9C%E5%92%A8%E8%AF%A2"
-        className="fixed bottom-4 left-4 z-30 flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-xl border border-cyan-500/40 bg-slate-950/95 px-4 py-3 shadow-2xl shadow-black/40 backdrop-blur transition hover:border-cyan-300 hover:bg-slate-900"
+        className="fixed bottom-4 right-4 z-30 flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-xl border border-cyan-500/40 bg-slate-950/95 px-4 py-3 shadow-2xl shadow-black/40 backdrop-blur transition hover:border-cyan-300 hover:bg-slate-900"
         aria-label="通过邮件联系 NassaAPI 商务合作"
       >
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-300">

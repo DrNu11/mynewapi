@@ -85,6 +85,12 @@ const STATUS_STYLES: Record<
 };
 
 const SERVICE_ORDER: PublicServiceKey[] = ['deepseek', 'gpt', 'claude', 'glm'];
+const CACHE_HIT_TARGET: Record<PublicServiceKey, string> = {
+  deepseek: '97.6%',
+  gpt: '97.8%',
+  claude: '97.4%',
+  glm: '97.7%',
+};
 const UPTIME_COLUMNS_PER_DAY = 24;
 const UPTIME_SLOT_MS = 60 * 60 * 1000;
 const UPTIME_COLORS: Record<PublicServiceStatus, string> = {
@@ -155,7 +161,9 @@ export default function PublicStatusPanel() {
     : loading
       ? '加载中'
       : '等待刷新';
-  const orderedServices = snapshot ? sortServices(snapshot.services) : [];
+  const orderedServices = snapshot
+    ? sortServices(snapshot.services).filter(shouldShowService)
+    : [];
 
   return (
     <section className="rounded-xl border border-slate-700 bg-slate-900/70 p-5 shadow-xl shadow-black/20 backdrop-blur">
@@ -260,12 +268,17 @@ function ServiceStatusRow({ service }: { service: PublicStatusService }) {
       <div className="mt-3 grid grid-cols-2 gap-2">
         <Metric label="最近成功率" value={formatPercent(service.successRate1h)} />
         <Metric label="24h 成功率" value={formatPercent(service.successRate24h)} />
-        <div className="col-span-2 flex items-center justify-between rounded-md border border-cyan-500/25 bg-cyan-500/10 px-2.5 py-2">
+        <div
+          className="flex items-center justify-between rounded-md border border-cyan-500/25 bg-cyan-500/10 px-2.5 py-2"
+          style={{ gridColumn: '1 / -1' }}
+        >
           <div>
             <div className="text-[10px] text-cyan-200/70">缓存命中率目标</div>
             <div className="mt-0.5 text-[10px] text-slate-500">性能优化目标</div>
           </div>
-          <div className="font-mono text-sm font-semibold text-cyan-200">97%～98%</div>
+          <div className="font-mono text-sm font-semibold text-cyan-200">
+            {CACHE_HIT_TARGET[service.key]}
+          </div>
         </div>
         <Metric label="Token 24h" value={formatTokenCount(service.tokens24h)} />
         <Metric label="RPM" value={formatRate(rpm)} />
@@ -337,6 +350,11 @@ function sortServices(services: PublicStatusService[]): PublicStatusService[] {
   return [...services].sort(
     (a, b) => SERVICE_ORDER.indexOf(a.key) - SERVICE_ORDER.indexOf(b.key),
   );
+}
+
+function shouldShowService(service: PublicStatusService): boolean {
+  if (service.key !== 'claude') return true;
+  return service.history.some((bucket) => bucket.total > 0);
 }
 
 function groupBucketsByDay(
