@@ -380,6 +380,8 @@ export default function ResultPage() {
         before_expires_at: body.data.before_expires_at,
         after_expires_at: body.data.after_expires_at,
       });
+      // 续费卡可能已经带有 GLM 好评奖励；续费完成后立即刷新次数看板。
+      await refreshUsage();
       setRenewCode('');
       setRenewLoading(false);
     } catch (err) {

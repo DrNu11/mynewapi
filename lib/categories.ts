@@ -65,10 +65,11 @@ export const CATEGORIES: Record<Category, CategoryMeta> = {
     prefix: 'CL',
     label: 'Claude 套餐',
     shortLabel: 'Claude',
-    description: '畅用 Anthropic Claude(Opus 4.7/4.8 + Sonnet 4.6)',
+    description: '畅用 Anthropic Claude(Opus 4.6/4.7/4.8 + Sonnet 4.6)',
     modelsEnv: 'MODELS_CLAUDE',
     // 与 NewAPI 后台 default group 渠道实际可用的 Claude 模型对齐
-    defaultModels: 'claude-opus-4-7,claude-sonnet-4-6,claude-opus-4-8',
+    defaultModels:
+      'claude-opus-4-6,claude-opus-4-7,claude-sonnet-4-6,claude-opus-4-8',
     hasCodex: false,
     badgeClass: 'border-orange-500/40 bg-orange-500/10 text-orange-300',
     defaultRPH: 300,

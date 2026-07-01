@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  applyGlmReviewBonus,
   applyRenewal,
   claimCard,
+  clearGlmReviewBonus,
   db,
+  getCardByTokenKey,
   insertCard,
   listRenewalRelationsForCardIds,
   type Card,
@@ -18,6 +21,7 @@ function insertRelationCard(opts: {
   tokenKey?: string | null;
   requestQuota?: number | null;
   requestBonusQuota?: number;
+  requestBonusReason?: string | null;
   rphBonus?: number;
 }): number {
   const now = Math.floor(Date.now() / 1000);
@@ -32,8 +36,8 @@ function insertRelationCard(opts: {
     rph_bonus_at: null,
     request_quota: opts.requestQuota ?? null,
     request_bonus_quota: opts.requestBonusQuota ?? 0,
-    request_bonus_reason: null,
-    request_bonus_at: null,
+    request_bonus_reason: opts.requestBonusReason ?? null,
+    request_bonus_at: opts.requestBonusReason ? now : null,
     video_quota: 1,
     video_bonus_quota: 0,
     pool: null,
@@ -111,7 +115,7 @@ describe('renewal relations', () => {
     expect(relations[renewalId].renewed_by).toEqual([]);
   });
 
-  it('only extends time and never transfers request or hourly quotas', () => {
+  it('does not transfer base, arbitrary bonus, or hourly quotas', () => {
     const originalCode = `${PREFIX}TIME-ONLY-ORIGINAL`;
     const renewalCode = `${PREFIX}TIME-ONLY-RENEWAL`;
     const originalId = insertRelationCard({
@@ -157,5 +161,95 @@ describe('renewal relations', () => {
       request_bonus_quota: 500,
       rph_bonus: 20,
     });
+  });
+
+  it('transfers a pre-approved GLM review bonus from the renewal card', () => {
+    const originalCode = `${PREFIX}REVIEW-ORIGINAL`;
+    const renewalCode = `${PREFIX}REVIEW-RENEWAL`;
+    const originalId = insertRelationCard({
+      code: originalCode,
+      status: 'activated',
+      tokenId: 789,
+      tokenKey: 'sk-renewal-review-bonus',
+      requestQuota: 500,
+      requestBonusQuota: 500,
+    });
+    const renewalId = insertRelationCard({
+      code: renewalCode,
+      status: 'unused',
+      requestQuota: 500,
+      requestBonusQuota: 500,
+      requestBonusReason: 'good_review',
+    });
+
+    expect(claimCard(renewalCode, '127.0.0.1')).toBe(true);
+    applyRenewal({
+      originalCardId: originalId,
+      renewalCardId: renewalId,
+      beforeExpiresAt: 1_800_000_000,
+      afterExpiresAt: 1_800_604_800,
+      addedDays: 7,
+      newapiTokenId: 789,
+      newapiTokenKey: 'sk-renewal-review-bonus',
+      newapiUserId: null,
+      renewalIp: '127.0.0.1',
+    });
+
+    const original = db().prepare(
+      'SELECT request_quota, request_bonus_quota FROM cards WHERE id = ?',
+    ).get(originalId) as {
+      request_quota: number | null;
+      request_bonus_quota: number;
+    };
+
+    expect(original).toEqual({
+      request_quota: 500,
+      request_bonus_quota: 1000,
+    });
+  });
+
+  it('applies a post-renewal GLM review bonus to the API key owner exactly once', () => {
+    const originalCode = `${PREFIX}POST-REVIEW-ORIGINAL`;
+    const renewalCode = `${PREFIX}POST-REVIEW-RENEWAL`;
+    const tokenKey = 'sk-renewal-post-review-bonus';
+    const originalId = insertRelationCard({
+      code: originalCode,
+      status: 'activated',
+      tokenId: 987,
+      tokenKey,
+      requestQuota: 500,
+      requestBonusQuota: 500,
+    });
+    const renewalId = insertRelationCard({
+      code: renewalCode,
+      status: 'unused',
+      requestQuota: 500,
+    });
+
+    expect(claimCard(renewalCode, '127.0.0.1')).toBe(true);
+    applyRenewal({
+      originalCardId: originalId,
+      renewalCardId: renewalId,
+      beforeExpiresAt: 1_800_000_000,
+      afterExpiresAt: 1_800_604_800,
+      addedDays: 7,
+      newapiTokenId: 987,
+      newapiTokenKey: tokenKey,
+      newapiUserId: null,
+      renewalIp: '127.0.0.1',
+    });
+
+    expect(applyGlmReviewBonus(renewalCode)).not.toBeNull();
+    expect(getCardByTokenKey(tokenKey)?.code).toBe(originalCode);
+    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(1000);
+
+    expect(applyGlmReviewBonus(renewalCode)).not.toBeNull();
+    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(1000);
+
+    expect(clearGlmReviewBonus(renewalCode)).not.toBeNull();
+    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(500);
+
+    expect(applyGlmReviewBonus(renewalCode)).not.toBeNull();
+    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(1000);
   });
 });

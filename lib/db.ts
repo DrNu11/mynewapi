@@ -110,6 +110,7 @@ function init(inst: Database.Database) {
       after_expires_at INTEGER NOT NULL,
       added_days REAL NOT NULL,
       newapi_token_id INTEGER NOT NULL,
+      review_bonus_transferred INTEGER NOT NULL DEFAULT 0,
       renewal_ip TEXT,
       FOREIGN KEY (original_card_id) REFERENCES cards(id),
       FOREIGN KEY (renewal_card_id) REFERENCES cards(id)
@@ -205,6 +206,34 @@ function init(inst: Database.Database) {
   }
   inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_newapi_user_id ON cards(newapi_user_id)');
   inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_pool ON cards(pool)');
+  // 续费卡的 GLM 好评奖励需要转移到 API Key 实际归属的原卡，并且只能转移一次。
+  const renewalCols = inst.prepare('PRAGMA table_info(renewals)').all() as Array<{ name: string }>;
+  if (!renewalCols.some((c) => c.name === 'review_bonus_transferred')) {
+    inst.exec('ALTER TABLE renewals ADD COLUMN review_bonus_transferred INTEGER NOT NULL DEFAULT 0');
+    const legacyReviewBonuses = inst.prepare(
+      `SELECT r.id AS renewal_id, r.original_card_id
+       FROM renewals r
+       JOIN cards renewal ON renewal.id = r.renewal_card_id
+       WHERE renewal.category = 'glm'
+         AND renewal.request_bonus_reason = 'good_review'
+         AND COALESCE(renewal.request_bonus_quota, 0) > 0`,
+    ).all() as Array<{ renewal_id: number; original_card_id: number }>;
+    const backfillReviewBonuses = inst.transaction(() => {
+      for (const row of legacyReviewBonuses) {
+        inst.prepare(
+          `UPDATE cards
+           SET request_bonus_quota = COALESCE(request_bonus_quota, 0) + ?,
+               request_bonus_reason = 'good_review',
+               request_bonus_at = COALESCE(request_bonus_at, unixepoch())
+           WHERE id = ?`,
+        ).run(GLM_REVIEW_BONUS_REQUEST_QUOTA, row.original_card_id);
+        inst.prepare(
+          'UPDATE renewals SET review_bonus_transferred = 1 WHERE id = ?',
+        ).run(row.renewal_id);
+      }
+    });
+    backfillReviewBonuses();
+  }
   // request_logs 老库补 model 列(新建库已在上面 CREATE 时带上)
   const rlCols = inst.prepare('PRAGMA table_info(request_logs)').all() as Array<{ name: string }>;
   if (!rlCols.some((c) => c.name === 'model')) {
@@ -581,7 +610,14 @@ export function setCardNewApiUserId(code: string, userId: number | null): Card |
 export function getCardByTokenKey(skKey: string): Card | null {
   return (
     (db()
-      .prepare('SELECT * FROM cards WHERE newapi_token_key = ?')
+      .prepare(
+        `SELECT card.*
+         FROM cards card
+         LEFT JOIN renewals relation ON relation.renewal_card_id = card.id
+         WHERE card.newapi_token_key = ?
+         ORDER BY CASE WHEN relation.id IS NULL THEN 0 ELSE 1 END, card.id ASC
+         LIMIT 1`,
+      )
       .get(skKey) as Card) || null
   );
 }
@@ -1436,13 +1472,46 @@ export function applyGlmReviewBonus(code: string): Card | null {
   if (!card) return null;
   if (!isGlmReviewBonusEligible(card)) return null;
 
-  db().prepare(
-    `UPDATE cards
-     SET request_bonus_quota = ?,
-         request_bonus_reason = ?,
-         request_bonus_at = ?
-     WHERE code = ?`
-  ).run(GLM_REVIEW_BONUS_REQUEST_QUOTA, 'good_review', now, code);
+  const relation = db().prepare(
+    `SELECT id, original_card_id, review_bonus_transferred
+     FROM renewals
+     WHERE renewal_card_id = ?
+     LIMIT 1`,
+  ).get(card.id) as {
+    id: number;
+    original_card_id: number;
+    review_bonus_transferred: number;
+  } | undefined;
+  const ownerCardId = relation?.original_card_id ?? card.id;
+
+  const tx = db().transaction(() => {
+    const sourceUpdate = db().prepare(
+      `UPDATE cards
+       SET request_bonus_quota = MAX(COALESCE(request_bonus_quota, 0), ?),
+           request_bonus_reason = ?,
+           request_bonus_at = ?
+       WHERE id = ?`,
+    ).run(GLM_REVIEW_BONUS_REQUEST_QUOTA, 'good_review', now, card.id);
+    if (sourceUpdate.changes !== 1) throw new Error('GLM review source card update failed');
+
+    if (ownerCardId !== card.id && relation && relation.review_bonus_transferred !== 1) {
+      const ownerUpdate = db().prepare(
+        `UPDATE cards
+         SET request_bonus_quota = COALESCE(request_bonus_quota, 0) + ?,
+             request_bonus_reason = 'good_review',
+             request_bonus_at = ?
+         WHERE id = ?`,
+      ).run(GLM_REVIEW_BONUS_REQUEST_QUOTA, now, ownerCardId);
+      if (ownerUpdate.changes !== 1) throw new Error('GLM review owner card update failed');
+      const relationUpdate = db().prepare(
+        `UPDATE renewals
+         SET review_bonus_transferred = 1
+         WHERE id = ? AND review_bonus_transferred = 0`,
+      ).run(relation.id);
+      if (relationUpdate.changes !== 1) throw new Error('GLM review transfer marker update failed');
+    }
+  });
+  tx();
   return getCardByCode(code);
 }
 
@@ -1451,13 +1520,52 @@ export function clearGlmReviewBonus(code: string): Card | null {
   if (!card) return null;
   if (!isGlmRequestQuotaCard(card)) return null;
 
-  db().prepare(
-    `UPDATE cards
-     SET request_bonus_quota = 0,
-         request_bonus_reason = NULL,
-         request_bonus_at = NULL
-     WHERE code = ?`
-  ).run(code);
+  const relation = db().prepare(
+    `SELECT id, original_card_id, review_bonus_transferred
+     FROM renewals
+     WHERE renewal_card_id = ?
+     LIMIT 1`,
+  ).get(card.id) as {
+    id: number;
+    original_card_id: number;
+    review_bonus_transferred: number;
+  } | undefined;
+
+  const tx = db().transaction(() => {
+    db().prepare(
+      `UPDATE cards
+       SET request_bonus_quota = 0,
+           request_bonus_reason = NULL,
+           request_bonus_at = NULL
+       WHERE id = ?`,
+    ).run(card.id);
+
+    if (relation?.review_bonus_transferred === 1) {
+      const ownerUpdate = db().prepare(
+        `UPDATE cards
+         SET request_bonus_quota = MAX(0, COALESCE(request_bonus_quota, 0) - ?),
+             request_bonus_reason = CASE
+               WHEN COALESCE(request_bonus_quota, 0) - ? > 0 THEN request_bonus_reason
+               ELSE NULL
+             END,
+             request_bonus_at = CASE
+               WHEN COALESCE(request_bonus_quota, 0) - ? > 0 THEN request_bonus_at
+               ELSE NULL
+             END
+         WHERE id = ?`,
+      ).run(
+        GLM_REVIEW_BONUS_REQUEST_QUOTA,
+        GLM_REVIEW_BONUS_REQUEST_QUOTA,
+        GLM_REVIEW_BONUS_REQUEST_QUOTA,
+        relation.original_card_id,
+      );
+      if (ownerUpdate.changes !== 1) throw new Error('GLM review owner bonus clear failed');
+      db().prepare(
+        'UPDATE renewals SET review_bonus_transferred = 0 WHERE id = ?',
+      ).run(relation.id);
+    }
+  });
+  tx();
   return getCardByCode(code);
 }
 
@@ -1859,6 +1967,7 @@ export interface Renewal {
   after_expires_at: number;
   added_days: number;
   newapi_token_id: number;
+  review_bonus_transferred: number;
   renewal_ip: string | null;
 }
 
@@ -1889,18 +1998,34 @@ export function applyRenewal(args: {
   newapiUserId: number | null;
   renewalIp: string | null;
 }): number {
-  // 续费的唯一业务增益是延长有效期。请求额度、奖励次数和 RPH 均不得转移或增加。
+  // 普通续费只延长有效期；唯一例外是续费卡已获得的 GLM 好评奖励。
+  // 基础请求额度、其他奖励和 RPH 均不得转移或增加。
   const now = Math.floor(Date.now() / 1000);
   const tx = db().transaction(() => {
+    const renewalBonus = db().prepare(
+      `SELECT category, request_bonus_quota, request_bonus_reason
+       FROM cards WHERE id = ?`,
+    ).get(args.renewalCardId) as {
+      category: string | null;
+      request_bonus_quota: number | null;
+      request_bonus_reason: string | null;
+    } | undefined;
+    const reviewBonus =
+      renewalBonus?.category === 'glm'
+      && renewalBonus.request_bonus_reason === 'good_review'
+      && Number(renewalBonus.request_bonus_quota || 0) > 0
+        ? GLM_REVIEW_BONUS_REQUEST_QUOTA
+        : 0;
+
     const r = db().prepare(`
       INSERT INTO renewals (original_card_id, renewal_card_id, renewed_at,
                             before_expires_at, after_expires_at, added_days,
-                            newapi_token_id, renewal_ip)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            newapi_token_id, review_bonus_transferred, renewal_ip)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       args.originalCardId, args.renewalCardId, now,
       args.beforeExpiresAt, args.afterExpiresAt, args.addedDays,
-      args.newapiTokenId, args.renewalIp,
+      args.newapiTokenId, reviewBonus > 0 ? 1 : 0, args.renewalIp,
     );
     if (r.changes !== 1) throw new Error('renewal insert failed');
 
@@ -1908,6 +2033,17 @@ export function applyRenewal(args: {
       `UPDATE cards SET expires_at = ?, status = 'activated' WHERE id = ?`,
     ).run(args.afterExpiresAt, args.originalCardId);
     if (u1.changes !== 1) throw new Error('original card update failed');
+
+    if (reviewBonus > 0) {
+      const bonusUpdate = db().prepare(
+        `UPDATE cards
+         SET request_bonus_quota = COALESCE(request_bonus_quota, 0) + ?,
+             request_bonus_reason = 'good_review',
+             request_bonus_at = ?
+         WHERE id = ?`,
+      ).run(reviewBonus, now, args.originalCardId);
+      if (bonusUpdate.changes !== 1) throw new Error('original card review bonus update failed');
+    }
 
     const u2 = db().prepare(`
       UPDATE cards
