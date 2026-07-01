@@ -100,6 +100,10 @@ export function SidebarModulesSection({
         title: t('Usage logs'),
         description: t('Detailed request logs for investigations.'),
       },
+      card_records: {
+        title: t('Card Records'),
+        description: t('Card based API call records'),
+      },
       midjourney: {
         title: t('Drawing logs'),
         description: t('History of Midjourney-style image tasks.'),

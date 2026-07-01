@@ -92,6 +92,11 @@ export function SidebarModulesCard() {
           description: t('API usage records'),
         },
         {
+          key: 'card_records',
+          title: t('Card Records'),
+          description: t('Card based API call records'),
+        },
+        {
           key: 'midjourney',
           title: t('Drawing Logs'),
           description: t('Drawing task records'),

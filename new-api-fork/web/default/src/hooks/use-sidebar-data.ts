@@ -21,6 +21,7 @@ import {
   Activity,
   Key,
   FileText,
+  ClipboardList,
   Wallet,
   Box,
   Users,
@@ -90,6 +91,12 @@ export function useSidebarData(): SidebarData {
             title: t('Usage Logs'),
             url: '/usage-logs/common',
             icon: FileText,
+          },
+          {
+            title: t('Card Records'),
+            url: '/card-records',
+            activeUrls: ['/dashboard/card-records'],
+            icon: ClipboardList,
           },
           {
             title: t('Task Logs'),

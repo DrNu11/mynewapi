@@ -119,6 +119,25 @@ func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	return logs, err
 }
 
+func GetLogsByTokenId(tokenId int, startIdx int, num int) (logs []*Log, total int64, err error) {
+	if tokenId <= 0 {
+		return []*Log{}, 0, nil
+	}
+	tx := LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId)
+	err = tx.Limit(logSearchCountLimit).Count(&total).Error
+	if err != nil {
+		common.SysError("failed to count token logs: " + err.Error())
+		return nil, 0, errors.New("查询日志失败")
+	}
+	err = tx.Order("id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	if err != nil {
+		common.SysError("failed to search token logs: " + err.Error())
+		return nil, 0, errors.New("查询日志失败")
+	}
+	formatUserLogs(logs, startIdx)
+	return logs, total, nil
+}
+
 func RecordLog(userId int, logType int, content string) {
 	if logType == LogTypeConsume && !common.LogConsumeEnabled {
 		return
