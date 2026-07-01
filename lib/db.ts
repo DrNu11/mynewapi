@@ -110,6 +110,7 @@ function init(inst: Database.Database) {
       after_expires_at INTEGER NOT NULL,
       added_days REAL NOT NULL,
       newapi_token_id INTEGER NOT NULL,
+      request_quota_transferred INTEGER NOT NULL DEFAULT 0,
       review_bonus_transferred INTEGER NOT NULL DEFAULT 0,
       renewal_ip TEXT,
       FOREIGN KEY (original_card_id) REFERENCES cards(id),
@@ -206,8 +207,11 @@ function init(inst: Database.Database) {
   }
   inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_newapi_user_id ON cards(newapi_user_id)');
   inst.exec('CREATE INDEX IF NOT EXISTS idx_cards_pool ON cards(pool)');
-  // 续费卡的 GLM 好评奖励需要转移到 API Key 实际归属的原卡，并且只能转移一次。
+  // 记录 GLM 续费基础额度与好评奖励是否已转移，避免重复补账。
   const renewalCols = inst.prepare('PRAGMA table_info(renewals)').all() as Array<{ name: string }>;
+  if (!renewalCols.some((c) => c.name === 'request_quota_transferred')) {
+    inst.exec('ALTER TABLE renewals ADD COLUMN request_quota_transferred INTEGER NOT NULL DEFAULT 0');
+  }
   if (!renewalCols.some((c) => c.name === 'review_bonus_transferred')) {
     inst.exec('ALTER TABLE renewals ADD COLUMN review_bonus_transferred INTEGER NOT NULL DEFAULT 0');
     const legacyReviewBonuses = inst.prepare(
@@ -1967,6 +1971,7 @@ export interface Renewal {
   after_expires_at: number;
   added_days: number;
   newapi_token_id: number;
+  request_quota_transferred: number;
   review_bonus_transferred: number;
   renewal_ip: string | null;
 }
@@ -1998,40 +2003,60 @@ export function applyRenewal(args: {
   newapiUserId: number | null;
   renewalIp: string | null;
 }): number {
-  // 普通续费只延长有效期；唯一例外是续费卡已获得的 GLM 好评奖励。
-  // 基础请求额度、其他奖励和 RPH 均不得转移或增加。
+  // GLM 续费同时转移续费卡的基础请求额度；好评奖励单独叠加。
+  // 其他任意奖励和 RPH 均不得转移或增加。
   const now = Math.floor(Date.now() / 1000);
   const tx = db().transaction(() => {
-    const renewalBonus = db().prepare(
-      `SELECT category, request_bonus_quota, request_bonus_reason
+    const renewalEntitlements = db().prepare(
+      `SELECT category, plan, request_quota, request_bonus_quota, request_bonus_reason
        FROM cards WHERE id = ?`,
     ).get(args.renewalCardId) as {
       category: string | null;
+      plan: string;
+      request_quota: number | null;
       request_bonus_quota: number | null;
       request_bonus_reason: string | null;
     } | undefined;
+    const requestQuota = renewalEntitlements && isGlmRequestQuotaCard(renewalEntitlements)
+      ? Math.max(0, Number(renewalEntitlements.request_quota ?? GLM_BASE_REQUEST_QUOTA))
+      : 0;
     const reviewBonus =
-      renewalBonus?.category === 'glm'
-      && renewalBonus.request_bonus_reason === 'good_review'
-      && Number(renewalBonus.request_bonus_quota || 0) > 0
+      renewalEntitlements?.category === 'glm'
+      && renewalEntitlements.request_bonus_reason === 'good_review'
+      && Number(renewalEntitlements.request_bonus_quota || 0) > 0
         ? GLM_REVIEW_BONUS_REQUEST_QUOTA
         : 0;
 
     const r = db().prepare(`
       INSERT INTO renewals (original_card_id, renewal_card_id, renewed_at,
                             before_expires_at, after_expires_at, added_days,
-                            newapi_token_id, review_bonus_transferred, renewal_ip)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            newapi_token_id, request_quota_transferred,
+                            review_bonus_transferred, renewal_ip)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       args.originalCardId, args.renewalCardId, now,
       args.beforeExpiresAt, args.afterExpiresAt, args.addedDays,
-      args.newapiTokenId, reviewBonus > 0 ? 1 : 0, args.renewalIp,
+      args.newapiTokenId, requestQuota > 0 ? 1 : 0,
+      reviewBonus > 0 ? 1 : 0, args.renewalIp,
     );
     if (r.changes !== 1) throw new Error('renewal insert failed');
 
     const u1 = db().prepare(
-      `UPDATE cards SET expires_at = ?, status = 'activated' WHERE id = ?`,
-    ).run(args.afterExpiresAt, args.originalCardId);
+      `UPDATE cards
+       SET expires_at = ?,
+           status = 'activated',
+           request_quota = CASE
+             WHEN ? > 0 THEN COALESCE(request_quota, ?) + ?
+             ELSE request_quota
+           END
+       WHERE id = ?`,
+    ).run(
+      args.afterExpiresAt,
+      requestQuota,
+      GLM_BASE_REQUEST_QUOTA,
+      requestQuota,
+      args.originalCardId,
+    );
     if (u1.changes !== 1) throw new Error('original card update failed');
 
     if (reviewBonus > 0) {

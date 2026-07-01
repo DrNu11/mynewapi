@@ -115,7 +115,7 @@ describe('renewal relations', () => {
     expect(relations[renewalId].renewed_by).toEqual([]);
   });
 
-  it('does not transfer base, arbitrary bonus, or hourly quotas', () => {
+  it('transfers the GLM renewal base quota but not arbitrary bonus or hourly quotas', () => {
     const originalCode = `${PREFIX}TIME-ONLY-ORIGINAL`;
     const renewalCode = `${PREFIX}TIME-ONLY-RENEWAL`;
     const originalId = insertRelationCard({
@@ -124,13 +124,12 @@ describe('renewal relations', () => {
       tokenId: 456,
       tokenKey: 'sk-renewal-time-only',
       requestQuota: 500,
-      requestBonusQuota: 500,
       rphBonus: 20,
     });
     const renewalId = insertRelationCard({
       code: renewalCode,
       status: 'unused',
-      requestQuota: 999,
+      requestQuota: 500,
       requestBonusQuota: 777,
       rphBonus: 300,
     });
@@ -157,8 +156,8 @@ describe('renewal relations', () => {
     };
 
     expect(original).toEqual({
-      request_quota: 500,
-      request_bonus_quota: 500,
+      request_quota: 1000,
+      request_bonus_quota: 0,
       rph_bonus: 20,
     });
   });
@@ -203,7 +202,7 @@ describe('renewal relations', () => {
     };
 
     expect(original).toEqual({
-      request_quota: 500,
+      request_quota: 1000,
       request_bonus_quota: 1000,
     });
   });
