@@ -23,6 +23,7 @@ import {
   ThumbsUp,
   RotateCcw,
   Clock,
+  Gauge,
 } from 'lucide-react';
 
 interface CardRow {
@@ -76,6 +77,25 @@ interface Stats {
   by_plan: Record<string, number>;
 }
 
+interface ModelMultiplierRow {
+  model: string;
+  category: Category;
+  categoryLabel: string;
+  supported: boolean;
+  baseRatio: number | null;
+  multiplier: number;
+  effectiveRatio: number | null;
+  currentRatio: number | null;
+  drifted: boolean;
+  updatedAt: number | null;
+}
+
+interface ModelMultiplierGroup {
+  category: Category;
+  label: string;
+  models: ModelMultiplierRow[];
+}
+
 export default function AdminDashboard() {
   const router = useRouter();
   const [cards, setCards] = useState<CardRow[]>([]);
@@ -110,7 +130,7 @@ export default function AdminDashboard() {
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [bonusId, setBonusId] = useState<number | null>(null);
   const [rphBonusInputs, setRphBonusInputs] = useState<Record<number, string>>({});
-  const [tab, setTab] = useState<'cards' | 'invites'>('cards');
+  const [tab, setTab] = useState<'cards' | 'multipliers' | 'invites'>('cards');
 
   useEffect(() => {
     if (genCategory !== 'glm') return;
@@ -647,6 +667,16 @@ ${modelsList}
             }`}
           >
             卡密管理
+          </button>
+          <button
+            onClick={() => setTab('multipliers')}
+            className={`rounded-t-lg px-4 py-2 text-sm font-medium transition ${
+              tab === 'multipliers'
+                ? 'border-b-2 border-amber-500 text-amber-300'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            倍率调整
           </button>
           <button
             onClick={() => { setTab('invites'); loadInvites(); }}
@@ -1322,8 +1352,225 @@ ${modelsList}
             )}
           </section>
         )}
+
+        {tab === 'multipliers' && <ModelMultiplierPanel />}
       </div>
     </main>
+  );
+}
+
+function ModelMultiplierPanel() {
+  const [groups, setGroups] = useState<ModelMultiplierGroup[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  function syncDrafts(nextGroups: ModelMultiplierGroup[]) {
+    const next: Record<string, string> = {};
+    for (const group of nextGroups) {
+      for (const model of group.models) next[model.model] = String(model.multiplier);
+    }
+    setDrafts(next);
+  }
+
+  async function loadMultipliers() {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/admin/model-multipliers', { cache: 'no-store' });
+      if (response.status === 401) {
+        window.location.href = '/admin/login';
+        return;
+      }
+      const body = await response.json();
+      if (!body.success) throw new Error(body.message || '读取倍率失败');
+      setGroups(body.data.groups);
+      syncDrafts(body.data.groups);
+    } catch (error) {
+      setMessage({ ok: false, text: error instanceof Error ? error.message : '读取倍率失败' });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadMultipliers();
+  }, []);
+
+  async function applyMultiplier(models: string[], rawMultiplier: string, savingKey: string) {
+    const multiplier = Number(rawMultiplier);
+    if (!Number.isFinite(multiplier) || multiplier < 0.1 || multiplier > 10) {
+      setMessage({ ok: false, text: '倍率必须在 0.1～10 之间' });
+      return;
+    }
+    if (multiplier > 1 && !window.confirm(
+      `确认把 ${models.length} 个模型设为 ${multiplier}× 高峰倍率？\n客户对应模型的实际额度消耗也会按 ${multiplier}× 计算。`,
+    )) return;
+
+    setSaving(savingKey);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/admin/model-multipliers', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ models, multiplier }),
+      });
+      const body = await response.json();
+      if (!body.success) throw new Error(body.message || '保存倍率失败');
+      setGroups(body.data.groups);
+      syncDrafts(body.data.groups);
+      setMessage({
+        ok: true,
+        text: `保存成功：${models.length} 个模型现按 ${multiplier}× 计算额度消耗。`,
+      });
+    } catch (error) {
+      setMessage({ ok: false, text: error instanceof Error ? error.message : '保存倍率失败' });
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-xl border border-amber-500/35 bg-slate-900/60 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-amber-200">
+            <Gauge className="h-5 w-5" />
+            模型花费倍率
+          </h2>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-400">
+            1× 为原价；高峰设为 3× 后，NewAPI 实际计费和卡密额度消耗都会按原来的 3 倍计算。
+            恢复 1× 会自动还原该模型原始倍率。只有管理员登录后可以修改。
+          </p>
+        </div>
+        <button
+          onClick={loadMultipliers}
+          disabled={loading || saving !== null}
+          className="flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+        >
+          <RefreshCcw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          刷新
+        </button>
+      </div>
+
+      {message && (
+        <div className={`mt-4 rounded-lg border px-3 py-2 text-sm ${
+          message.ok
+            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+            : 'border-red-500/40 bg-red-500/10 text-red-200'
+        }`}>
+          {message.text}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-16 text-sm text-slate-400">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />读取 NewAPI 当前倍率…
+        </div>
+      ) : (
+        <div className="mt-5 space-y-5">
+          {groups.map((group) => {
+            const supportedModels = group.models.filter((model) => model.supported);
+            const groupValue = groupDrafts[group.category] ?? '1';
+            return (
+              <div key={group.category} className="overflow-hidden rounded-xl border border-slate-700">
+                <div className="flex flex-wrap items-end justify-between gap-3 bg-slate-900/80 px-4 py-3">
+                  <div>
+                    <div className="font-medium text-slate-100">{group.label}</div>
+                    <div className="mt-0.5 text-xs text-slate-500">{supportedModels.length} 个倍率计费模型</div>
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <div>
+                      <label className="block text-[11px] text-slate-500">整组统一倍率</label>
+                      <input
+                        type="number"
+                        min={0.1}
+                        max={10}
+                        step={0.1}
+                        value={groupValue}
+                        onChange={(event) => setGroupDrafts((current) => ({
+                          ...current,
+                          [group.category]: event.target.value,
+                        }))}
+                        className="mt-1 w-24 rounded border border-slate-600 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      onClick={() => applyMultiplier(
+                        supportedModels.map((model) => model.model),
+                        groupValue,
+                        `group:${group.category}`,
+                      )}
+                      disabled={supportedModels.length === 0 || saving !== null}
+                      className="rounded bg-amber-500 px-3 py-1.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:bg-slate-700 disabled:text-slate-400"
+                    >
+                      {saving === `group:${group.category}` ? '保存中…' : '应用整组'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="divide-y divide-slate-800">
+                  {group.models.map((model) => (
+                    <div key={model.model} className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(220px,1fr)_110px_110px_150px] md:items-center">
+                      <div>
+                        <div className="font-mono text-sm text-slate-200">{model.model}</div>
+                        {!model.supported && (
+                          <div className="mt-1 text-xs text-slate-500">固定价格模型，不能使用倍率调整</div>
+                        )}
+                        {model.drifted && (
+                          <div className="mt-1 text-xs text-amber-300">检测到 NewAPI 后台曾直接修改，保存时会重新校准基础倍率</div>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        <div>基础倍率</div>
+                        <div className="mt-1 font-mono text-sm text-slate-200">{model.baseRatio ?? '—'}×</div>
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        <div>实际倍率</div>
+                        <div className={`mt-1 font-mono text-sm ${model.multiplier > 1 ? 'text-amber-300' : 'text-emerald-300'}`}>
+                          {model.currentRatio ?? '—'}×
+                        </div>
+                      </div>
+                      <div className="flex items-end gap-2">
+                        <div>
+                          <label className="block text-[11px] text-slate-500">高峰加价</label>
+                          <input
+                            type="number"
+                            min={0.1}
+                            max={10}
+                            step={0.1}
+                            value={drafts[model.model] ?? '1'}
+                            disabled={!model.supported || saving !== null}
+                            onChange={(event) => setDrafts((current) => ({
+                              ...current,
+                              [model.model]: event.target.value,
+                            }))}
+                            className="mt-1 w-20 rounded border border-slate-600 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-amber-500 focus:outline-none disabled:opacity-40"
+                          />
+                        </div>
+                        <button
+                          onClick={() => applyMultiplier(
+                            [model.model],
+                            drafts[model.model] ?? '1',
+                            model.model,
+                          )}
+                          disabled={!model.supported || saving !== null}
+                          className="rounded border border-amber-500/50 px-2.5 py-1.5 text-xs text-amber-200 hover:bg-amber-500/10 disabled:border-slate-700 disabled:text-slate-600"
+                        >
+                          {saving === model.model ? '保存中' : '保存'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 

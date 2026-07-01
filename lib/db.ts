@@ -101,6 +101,15 @@ function init(inst: Database.Database) {
       PRIMARY KEY (key, window_start)
     );
 
+    CREATE TABLE IF NOT EXISTS model_multiplier_settings (
+      model TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      base_ratio REAL NOT NULL,
+      multiplier REAL NOT NULL DEFAULT 1,
+      effective_ratio REAL NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS renewals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       original_card_id INTEGER NOT NULL,
@@ -1958,6 +1967,43 @@ export function markExpiredCards(): number {
   const now = Math.floor(Date.now() / 1000);
   const info = db().prepare(`UPDATE cards SET status = 'expired' WHERE status = 'activated' AND expires_at IS NOT NULL AND expires_at <= ?`).run(now);
   return info.changes as number;
+}
+
+// =============================== 模型高峰倍率 ===============================
+
+export interface ModelMultiplierSetting {
+  model: string;
+  category: string;
+  base_ratio: number;
+  multiplier: number;
+  effective_ratio: number;
+  updated_at: number;
+}
+
+export function listModelMultiplierSettings(): ModelMultiplierSetting[] {
+  return db()
+    .prepare('SELECT * FROM model_multiplier_settings ORDER BY category, model')
+    .all() as ModelMultiplierSetting[];
+}
+
+export function saveModelMultiplierSettings(settings: ModelMultiplierSetting[]): void {
+  if (settings.length === 0) return;
+  const stmt = db().prepare(`
+    INSERT INTO model_multiplier_settings
+      (model, category, base_ratio, multiplier, effective_ratio, updated_at)
+    VALUES
+      (@model, @category, @base_ratio, @multiplier, @effective_ratio, @updated_at)
+    ON CONFLICT(model) DO UPDATE SET
+      category = excluded.category,
+      base_ratio = excluded.base_ratio,
+      multiplier = excluded.multiplier,
+      effective_ratio = excluded.effective_ratio,
+      updated_at = excluded.updated_at
+  `);
+  const tx = db().transaction((rows: ModelMultiplierSetting[]) => {
+    for (const row of rows) stmt.run(row);
+  });
+  tx(settings);
 }
 
 // =============================== 续费 (renewals) ===============================

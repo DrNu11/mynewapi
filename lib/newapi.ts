@@ -75,6 +75,41 @@ async function call<T = any>(
   return body;
 }
 
+interface NewApiOption {
+  key: string;
+  value: string;
+}
+
+/** 读取 NewAPI 当前生效的完整模型倍率表。需要 root access token。 */
+export async function getNewApiModelRatios(): Promise<Record<string, number>> {
+  const response = await call<NewApiOption[]>('/api/option/');
+  const option = response.data?.find((item) => item.key === 'ModelRatio');
+  if (!option) throw new Error('NewAPI 未返回 ModelRatio 配置');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(option.value);
+  } catch {
+    throw new Error('NewAPI ModelRatio 配置不是有效 JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('NewAPI ModelRatio 配置格式错误');
+  }
+  const ratios: Record<string, number> = {};
+  for (const [model, value] of Object.entries(parsed)) {
+    const ratio = Number(value);
+    if (Number.isFinite(ratio) && ratio >= 0) ratios[model] = ratio;
+  }
+  return ratios;
+}
+
+/** 整表写回 NewAPI；调用方必须先读取并保留所有无关模型。 */
+export async function updateNewApiModelRatios(ratios: Record<string, number>): Promise<void> {
+  await call('/api/option/', {
+    method: 'PUT',
+    body: JSON.stringify({ key: 'ModelRatio', value: JSON.stringify(ratios) }),
+  });
+}
+
 /** NewAPI 内部 quota 倍率:1 USD = 500000 quota */
 const QUOTA_PER_USD = 500000;
 
