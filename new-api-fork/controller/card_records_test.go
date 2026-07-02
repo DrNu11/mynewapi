@@ -11,8 +11,8 @@ func TestBuildCardRecordItemSanitizesErrorDetails(t *testing.T) {
 	item := buildCardRecordItem(&model.Log{
 		Type:             model.LogTypeError,
 		CreatedAt:        123,
-		ModelName:        "MiniMax-M3",
-		Content:          "provider upstream channel_id base_url 模型映射 should not leak",
+		ModelName:        "MINIMAX-M3",
+		Content:          "Provider UpStream CHANNEL_ID BASE_URL 模型映射 should not leak",
 		PromptTokens:     11,
 		CompletionTokens: 22,
 		Quota:            33,

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,6 +19,10 @@ import (
 )
 
 const cardRecordsMaxErrorSummaryLen = 160
+
+var cardRecordSensitiveTextPattern = regexp.MustCompile(
+	`(?i)(minimax-m3|minimax|channel_id|channel|provider|upstream|base_url)`,
+)
 
 type cardRecordsQueryRequest struct {
 	CardCode string `json:"card_code"`
@@ -237,19 +242,8 @@ func sanitizeCardRecordText(value string, maxLen int) string {
 	if value == "" {
 		return ""
 	}
-	replacer := strings.NewReplacer(
-		"MiniMax-M3", "[hidden]",
-		"minimax-m3", "[hidden]",
-		"MiniMax", "[hidden]",
-		"minimax", "[hidden]",
-		"channel_id", "[hidden]",
-		"channel", "[hidden]",
-		"provider", "[hidden]",
-		"upstream", "[hidden]",
-		"base_url", "[hidden]",
-		"模型映射", "[hidden]",
-	)
-	value = replacer.Replace(value)
+	value = cardRecordSensitiveTextPattern.ReplaceAllString(value, "[hidden]")
+	value = strings.ReplaceAll(value, "模型映射", "[hidden]")
 	value = strings.Join(strings.Fields(value), " ")
 	if maxLen > 0 && len([]rune(value)) > maxLen {
 		runes := []rune(value)
