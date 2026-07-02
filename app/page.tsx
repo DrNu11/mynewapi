@@ -7,7 +7,7 @@ import { PLANS } from '@/lib/plans';
 import type { Plan } from '@/lib/plans';
 import { CATEGORY_LIST } from '@/lib/categories';
 import type { CategoryMeta } from '@/lib/categories';
-import { Sparkles, KeyRound, Loader2, ShieldCheck, Zap, ShoppingCart, Film, WandSparkles, Presentation } from 'lucide-react';
+import { Sparkles, KeyRound, Loader2, ShieldCheck, Zap, ShoppingCart, Film, WandSparkles, Presentation, ImageIcon } from 'lucide-react';
 
 function planDescriptionForCategory(cat: CategoryMeta, plan: Plan): string {
   if (cat.id === 'gpt' && plan.id === '7d') {
@@ -242,6 +242,30 @@ export default function HomePage() {
               <span aria-hidden="true">→</span>
             </div>
           </Link>
+
+          {/* image-2 生图入口 */}
+          <a
+            href="https://image.nassaapi.xyz/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group flex flex-col justify-between rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur transition hover:border-rose-500/60"
+          >
+            <div>
+              <div className="flex items-center gap-2 text-rose-400">
+                <ImageIcon className="h-4 w-4" />
+                <span className="text-sm font-medium">image-2 生图</span>
+              </div>
+              <h3 className="mt-3 text-2xl font-bold text-slate-100">2毛一张4K</h3>
+              <p className="mt-2 text-sm text-slate-400">
+                输入提示词和 API Key，image-2 生图，高清 4K 输出，2毛一张超低价。
+              </p>
+            </div>
+            <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-rose-500 px-4 py-3 font-medium text-white transition group-hover:bg-rose-600">
+              <ImageIcon className="h-4 w-4" />
+              立即生成
+              <span aria-hidden="true">→</span>
+            </div>
+          </a>
         </div>
 
         {/* 套餐展示 */}
