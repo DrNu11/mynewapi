@@ -7,13 +7,14 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!isAdminAuthenticated()) {
+  if (!await isAdminAuthenticated()) {
     return NextResponse.json({ success: false, message: '未登录' }, { status: 401 });
   }
 
-  const redemptionId = parseInt(params.id, 10);
+  const { id } = await params;
+  const redemptionId = parseInt(id, 10);
   if (!Number.isInteger(redemptionId) || redemptionId <= 0) {
     return NextResponse.json({ success: false, message: '无效的 ID' }, { status: 400 });
   }

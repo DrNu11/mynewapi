@@ -17,12 +17,13 @@ export function checkAdminCredentials(username: string, password: string): boole
   return timingSafeEqual(username, adminUser) && timingSafeEqual(password, adminPass);
 }
 
-export function createAdminSession(): string {
+export async function createAdminSession(): Promise<string> {
   const id = crypto.randomBytes(24).toString('hex');
   const now = Math.floor(Date.now() / 1000);
   db().prepare('INSERT INTO admin_sessions (id, created_at, expires_at) VALUES (?, ?, ?)')
     .run(id, now, now + SESSION_TTL);
-  cookies().set(COOKIE_NAME, id, {
+  const cookieStore = await cookies();
+  cookieStore.set(COOKIE_NAME, id, {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.COOKIE_SECURE === 'true',
@@ -32,12 +33,13 @@ export function createAdminSession(): string {
   return id;
 }
 
-export function destroyAdminSession(): void {
-  const id = cookies().get(COOKIE_NAME)?.value;
+export async function destroyAdminSession(): Promise<void> {
+  const cookieStore = await cookies();
+  const id = cookieStore.get(COOKIE_NAME)?.value;
   if (id) {
     db().prepare('DELETE FROM admin_sessions WHERE id = ?').run(id);
   }
-  cookies().delete(COOKIE_NAME);
+  cookieStore.delete(COOKIE_NAME);
 }
 
 /** 顺手清理过期 session(每次校验时低概率触发) */
@@ -46,9 +48,10 @@ function gcSessions(): void {
   db().prepare('DELETE FROM admin_sessions WHERE expires_at < ?').run(Math.floor(Date.now() / 1000));
 }
 
-export function isAdminAuthenticated(): boolean {
+export async function isAdminAuthenticated(): Promise<boolean> {
   gcSessions();
-  const id = cookies().get(COOKIE_NAME)?.value;
+  const cookieStore = await cookies();
+  const id = cookieStore.get(COOKIE_NAME)?.value;
   if (!id) return false;
   const row = db().prepare('SELECT expires_at FROM admin_sessions WHERE id = ?').get(id) as
     | { expires_at: number }

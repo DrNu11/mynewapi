@@ -9,9 +9,9 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { code: string } },
+  { params }: { params: Promise<{ code: string }> },
 ) {
-  const inviteCode = params.code;
+  const { code: inviteCode } = await params;
 
   const baseUrl = process.env.PUBLIC_API_BASE_ROOT || req.nextUrl.origin;
 

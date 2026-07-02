@@ -821,24 +821,30 @@ async function handle(req: NextRequest, pathParts: string[]) {
   });
 }
 
-type Ctx = { params: { path: string[] } };
+type Ctx = { params: Promise<{ path: string[] }> };
 export async function GET(req: NextRequest, ctx: Ctx) {
-  return handle(req, ctx.params.path);
+  const { path } = await ctx.params;
+  return handle(req, path);
 }
 export async function POST(req: NextRequest, ctx: Ctx) {
-  return handle(req, ctx.params.path);
+  const { path } = await ctx.params;
+  return handle(req, path);
 }
 export async function PUT(req: NextRequest, ctx: Ctx) {
-  return handle(req, ctx.params.path);
+  const { path } = await ctx.params;
+  return handle(req, path);
 }
 export async function DELETE(req: NextRequest, ctx: Ctx) {
-  return handle(req, ctx.params.path);
+  const { path } = await ctx.params;
+  return handle(req, path);
 }
 export async function PATCH(req: NextRequest, ctx: Ctx) {
-  return handle(req, ctx.params.path);
+  const { path } = await ctx.params;
+  return handle(req, path);
 }
 export async function HEAD(req: NextRequest, ctx: Ctx) {
-  return handle(req, ctx.params.path);
+  const { path } = await ctx.params;
+  return handle(req, path);
 }
 /**
  * CORS 预检 — 浏览器/Tauri/Electron webview 在跨域调 /v1/* 前会先发 OPTIONS,

@@ -23,7 +23,7 @@ function unauthorized() {
 }
 
 export async function GET(req: NextRequest) {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
 
   markExpiredCards();
 
@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
 
   let body: {
     plan?: string;

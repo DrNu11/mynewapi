@@ -16,10 +16,10 @@ function unauthorized() {
   return NextResponse.json({ success: false, message: '未登录' }, { status: 401 });
 }
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
 
   const db = audit();
   if (!db) {
@@ -29,7 +29,8 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
     );
   }
 
-  const id = parseInt(ctx.params.id, 10);
+  const { id: idParam } = await ctx.params;
+  const id = parseInt(idParam, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return NextResponse.json({ success: false, message: '无效 id' }, { status: 400 });
   }
@@ -45,7 +46,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 }
 
 export async function POST(req: NextRequest, ctx: Ctx) {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
 
   const db = audit();
   if (!db) {
@@ -55,7 +56,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     );
   }
 
-  const id = parseInt(ctx.params.id, 10);
+  const { id: idParam } = await ctx.params;
+  const id = parseInt(idParam, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return NextResponse.json({ success: false, message: '无效 id' }, { status: 400 });
   }

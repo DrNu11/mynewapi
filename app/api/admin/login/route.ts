@@ -23,6 +23,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: '用户名或密码错误' }, { status: 401 });
   }
 
-  createAdminSession();
+  await createAdminSession();
   return NextResponse.json({ success: true });
 }

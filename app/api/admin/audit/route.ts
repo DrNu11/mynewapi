@@ -21,7 +21,7 @@ function unauthorized() {
 }
 
 export async function GET(req: NextRequest) {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
 
   const db = audit();
   if (!db) {

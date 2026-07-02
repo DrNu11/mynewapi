@@ -18,7 +18,7 @@ function unauthorized() {
  * 管理卡密到期时间,保留原 API key、套餐和请求额度不变。
  */
 export async function POST(req: NextRequest) {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
 
   let body: { code?: string; days?: number; permanent?: boolean };
   try {

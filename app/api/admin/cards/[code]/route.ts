@@ -37,11 +37,12 @@ function unauthorized() {
  */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
 
-  const code = normalizeCode(params.code || '');
+  const { code: codeParam } = await params;
+  const code = normalizeCode(codeParam || '');
   let body: {
     action?: string;
     pool?: string;

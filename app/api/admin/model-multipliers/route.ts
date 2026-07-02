@@ -15,7 +15,7 @@ function unauthorized() {
 }
 
 export async function GET() {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
   try {
     const groups = await getModelMultiplierGroups();
     return NextResponse.json({ success: true, data: { groups } });
@@ -29,7 +29,7 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
   let body: { models?: unknown; multiplier?: unknown };
   try {
     body = await req.json();

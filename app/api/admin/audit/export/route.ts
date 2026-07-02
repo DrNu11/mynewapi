@@ -29,7 +29,7 @@ function tsTag(): string {
 }
 
 export async function GET(req: NextRequest) {
-  if (!isAdminAuthenticated()) return unauthorized();
+  if (!await isAdminAuthenticated()) return unauthorized();
 
   const { searchParams } = new URL(req.url);
   const type = searchParams.get('type') || 'conversations';

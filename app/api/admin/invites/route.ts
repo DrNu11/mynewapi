@@ -35,7 +35,7 @@ interface RedemptionRow {
 }
 
 export async function GET(req: NextRequest) {
-  if (!isAdminAuthenticated()) {
+  if (!await isAdminAuthenticated()) {
     return NextResponse.json({ success: false, message: '未登录' }, { status: 401 });
   }
 
