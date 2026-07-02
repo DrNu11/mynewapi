@@ -189,8 +189,10 @@ export default function HomePage() {
           </a>
 
           {/* 视频生成入口 */}
-          <Link
-            href="/video"
+          <a
+            href="https://video.nassaapi.xyz/"
+            target="_blank"
+            rel="noopener noreferrer"
             className="group flex flex-col justify-between rounded-2xl border border-slate-700 bg-slate-900/60 p-6 shadow-2xl backdrop-blur transition hover:border-violet-500/60"
           >
             <div>
@@ -204,8 +206,7 @@ export default function HomePage() {
               </h3>
 
               <p className="mt-2 text-sm text-slate-400">
-                上传一张图片和一句提示词，在线生成短视频。
-                未激活卡密默认可体验 1 次，邀请好友成功生成还可获得更多次数。
+                上传一张图片和一句提示词，在线生成短视频。适合想入手漫剧的朋友们。
               </p>
             </div>
 
@@ -214,7 +215,7 @@ export default function HomePage() {
               立即生成
               <span aria-hidden="true">→</span>
             </div>
-          </Link>
+          </a>
 
           {/* PPT 生成入口 */}
           <Link
