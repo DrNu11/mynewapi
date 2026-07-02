@@ -203,7 +203,7 @@ describe('renewal relations', () => {
 
     expect(original).toEqual({
       request_quota: 1000,
-      request_bonus_quota: 1000,
+      request_bonus_quota: 666,
     });
   });
 
@@ -240,15 +240,15 @@ describe('renewal relations', () => {
 
     expect(applyGlmReviewBonus(renewalCode)).not.toBeNull();
     expect(getCardByTokenKey(tokenKey)?.code).toBe(originalCode);
-    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(1000);
+    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(666);
 
     expect(applyGlmReviewBonus(renewalCode)).not.toBeNull();
-    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(1000);
+    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(666);
 
     expect(clearGlmReviewBonus(renewalCode)).not.toBeNull();
     expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(500);
 
     expect(applyGlmReviewBonus(renewalCode)).not.toBeNull();
-    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(1000);
+    expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(666);
   });
 });

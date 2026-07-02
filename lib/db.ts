@@ -446,7 +446,7 @@ export interface Card {
   rph_bonus_at: number | null;
   /** 总请求次数基础额度;NULL = 不启用总请求次数限制 */
   request_quota: number | null;
-  /** 请求次数奖励额度(GLM 好评 +500 等),不影响 RPH */
+  /** 请求次数奖励额度(GLM 好评 +166 等),不影响 RPH */
   request_bonus_quota: number;
   request_bonus_reason: string | null;
   request_bonus_at: number | null;
@@ -1478,7 +1478,7 @@ export function clearRphBonus(code: string): Card | null {
   return getCardByCode(code);
 }
 
-/** GLM 好评 +500 请求次数奖励;不写 rph_bonus,不影响 DeepSeek。 */
+/** GLM 好评 +166 请求次数奖励;不写 rph_bonus,不影响 DeepSeek。 */
 export function applyGlmReviewBonus(code: string): Card | null {
   const now = Math.floor(Date.now() / 1000);
   const card = getCardByCode(code);

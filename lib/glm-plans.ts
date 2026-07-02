@@ -4,7 +4,7 @@ export const GLM_PLAN_IDS = ['1d', '7d', '30d'] as const satisfies readonly Plan
 export type GlmPlanId = (typeof GLM_PLAN_IDS)[number];
 
 export const GLM_BASE_REQUEST_QUOTA = 500;
-export const GLM_REVIEW_BONUS_REQUEST_QUOTA = 500;
+export const GLM_REVIEW_BONUS_REQUEST_QUOTA = 166;
 
 export function isGlmPlanId(plan: string): plan is GlmPlanId {
   return (GLM_PLAN_IDS as readonly string[]).includes(plan);

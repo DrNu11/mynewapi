@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PLANS, formatDaysCN } from '@/lib/plans';
 import { CATEGORIES, CATEGORY_LIST, modelsForCategory, type Category } from '@/lib/categories';
-import { getGlmPlanName, isGlmPlanId } from '@/lib/glm-plans';
+import { getGlmPlanName, GLM_REVIEW_BONUS_REQUEST_QUOTA, isGlmPlanId } from '@/lib/glm-plans';
 import {
   Plus,
   RefreshCcw,
@@ -279,8 +279,8 @@ glm-5.2
 套餐说明：
 GLM-5.2 ${planName}，${formatDaysCN(planDays)}有效。
 基础可请求 500 次。
-好评后可额外增加 500 次请求额度。
-好评后总共可请求 1000 次。
+好评后可额外增加 166 次请求额度。
+好评后总共可请求 666 次。
 
 适合场景：
 智能体调用、代码生成、长文本处理、日常 AI 对话。
@@ -556,9 +556,9 @@ ${modelsList}
   }
 
   async function glmBonusAction(card: CardRow, action: 'apply_glm_review_bonus' | 'clear_glm_review_bonus') {
-    const label = action === 'apply_glm_review_bonus' ? '好评 +500' : '撤销 +500';
-    if (action === 'apply_glm_review_bonus' && !confirm(`确定为 ${card.code} 应用 GLM 好评奖励 +500 次请求额度?`)) return;
-    if (action === 'clear_glm_review_bonus' && !confirm(`确定撤销 ${card.code} 的 GLM +500 次请求额度?`)) return;
+    const label = action === 'apply_glm_review_bonus' ? `好评 +${GLM_REVIEW_BONUS_REQUEST_QUOTA}` : `撤销 +${card.request_bonus_quota || 0}`;
+    if (action === 'apply_glm_review_bonus' && !confirm(`确定为 ${card.code} 应用 GLM 好评奖励 +${GLM_REVIEW_BONUS_REQUEST_QUOTA} 次请求额度?`)) return;
+    if (action === 'clear_glm_review_bonus' && !confirm(`确定撤销 ${card.code} 的 GLM +${card.request_bonus_quota || 0} 次请求额度?`)) return;
     setBonusId(card.id);
     try {
       const res = await fetch(`/api/admin/cards/${encodeURIComponent(card.code)}`, {
@@ -1180,7 +1180,7 @@ ${modelsList}
                             </button>
                           </>
                         )}
-                        {/* GLM 日卡/周卡/月卡请求额度奖励:好评 +500 次 */}
+                        {/* GLM 日卡/周卡/月卡请求额度奖励:好评后升至 666 次 */}
                         {c.category === 'glm' && isGlmPlanId(c.plan) && c.status !== 'expired' && c.status !== 'disabled' && (
                           c.request_bonus_quota > 0 ? (
                             <>
@@ -1189,7 +1189,7 @@ ${modelsList}
                                 className="flex items-center gap-1 rounded border border-emerald-500/40 px-2 py-1 text-xs text-emerald-300"
                               >
                                 <ThumbsUp className="h-3 w-3" />
-                                已奖励 +500
+                                已奖励 +{c.request_bonus_quota}
                               </button>
                               <button
                                 onClick={() => glmBonusAction(c, 'clear_glm_review_bonus')}
@@ -1201,7 +1201,7 @@ ${modelsList}
                                 ) : (
                                   <RotateCcw className="h-3 w-3" />
                                 )}
-                                撤销 +500
+                                撤销 +{c.request_bonus_quota}
                               </button>
                             </>
                           ) : (
@@ -1215,7 +1215,7 @@ ${modelsList}
                               ) : (
                                 <ThumbsUp className="h-3 w-3" />
                               )}
-                              好评 +500
+                              好评 +{GLM_REVIEW_BONUS_REQUEST_QUOTA}
                             </button>
                           )
                         )}

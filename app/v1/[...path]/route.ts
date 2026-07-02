@@ -525,7 +525,7 @@ async function handle(req: NextRequest, pathParts: string[]) {
     }
   }
 
-  // 4.2 GLM-5.2 日卡/周卡/月卡总请求次数额度:基础 500 次,好评后 1000 次。
+  // 4.2 GLM-5.2 日卡/周卡/月卡总请求次数额度:基础 500 次,好评后 666 次。
   if (isGlmRequestQuotaCard(card)) {
     const effectiveRequestQuota = getEffectiveRequestQuota(card);
     if (effectiveRequestQuota !== null && card.activated_at) {

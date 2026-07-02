@@ -705,7 +705,7 @@ export default function ResultPage() {
                   {glmBonusQuota > 0 ? '已获得好评奖励' : '好评后可提升'}
                 </div>
                 <div className="mt-1 font-mono text-lg font-bold text-emerald-100">
-                  {glmBonusQuota > 0 ? `+${glmBonusQuota} 次` : '至 1000 次'}
+                  {glmBonusQuota > 0 ? `+${glmBonusQuota} 次` : '至 666 次'}
                 </div>
               </div>
               <div className="rounded-lg border border-emerald-500/20 bg-slate-950/40 px-4 py-3">
@@ -965,7 +965,7 @@ export default function ResultPage() {
                 </div>
                 <div className="mt-0.5 text-[10px] text-slate-500">
                   {isGlmQuotaCard
-                    ? `基础 ${glmRequestQuota ?? 500} 次 · 好评 +500 次`
+                    ? `基础 ${glmRequestQuota ?? 500} 次 · 好评后 666 次`
                     : data.plan === '30d_light'
                       ? 'flash 1点/次 · pro 3点/次'
                       : `每小时上限 ${data.rph || '不限'}`}

@@ -131,14 +131,14 @@ describe('GLM request quota', () => {
     expect(isGlmReviewBonusEligible(card)).toBe(true);
   });
 
-  it('applies +500 review bonus without touching RPH bonus', () => {
+  it('applies +166 review bonus without touching RPH bonus', () => {
     const { code } = insertTestCard({ category: 'glm' });
     const updated = applyGlmReviewBonus(code);
     expect(updated).not.toBeNull();
     expect(updated!.request_bonus_quota).toBe(GLM_REVIEW_BONUS_REQUEST_QUOTA);
     expect(updated!.request_bonus_reason).toBe('good_review');
     expect(updated!.rph_bonus).toBe(0);
-    expect(getEffectiveRequestQuota(updated!)).toBe(1000);
+    expect(getEffectiveRequestQuota(updated!)).toBe(666);
   });
 
   it('does not stack repeated review bonus', () => {
@@ -146,8 +146,8 @@ describe('GLM request quota', () => {
     applyGlmReviewBonus(code);
     applyGlmReviewBonus(code);
     const updated = applyGlmReviewBonus(code);
-    expect(updated!.request_bonus_quota).toBe(500);
-    expect(getEffectiveRequestQuota(updated!)).toBe(1000);
+    expect(updated!.request_bonus_quota).toBe(GLM_REVIEW_BONUS_REQUEST_QUOTA);
+    expect(getEffectiveRequestQuota(updated!)).toBe(666);
   });
 
   it('clears review bonus', () => {

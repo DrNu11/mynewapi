@@ -111,7 +111,7 @@ export async function PATCH(
     return NextResponse.json({ success: true, data: { card: updated } });
   }
 
-  // GLM 好评 +500 请求次数奖励;独立于 DeepSeek RPH 加成
+  // GLM 好评请求次数奖励;独立于 DeepSeek RPH 加成
   if (action === 'apply_glm_review_bonus') {
     if (!isGlmReviewBonusEligible(card)) {
       return NextResponse.json(
