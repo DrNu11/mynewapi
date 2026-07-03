@@ -626,9 +626,15 @@ export function getCardByTokenKey(skKey: string): Card | null {
       .prepare(
         `SELECT card.*
          FROM cards card
-         LEFT JOIN renewals relation ON relation.renewal_card_id = card.id
          WHERE card.newapi_token_key = ?
-         ORDER BY CASE WHEN relation.id IS NULL THEN 0 ELSE 1 END, card.id ASC
+         ORDER BY
+           COALESCE((
+             SELECT MAX(relation.id)
+             FROM renewals relation
+             WHERE relation.original_card_id = card.id
+           ), 0) DESC,
+           CASE WHEN card.status = 'activated' THEN 0 ELSE 1 END,
+           card.id ASC
          LIMIT 1`,
       )
       .get(skKey) as Card) || null

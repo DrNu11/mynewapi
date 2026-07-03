@@ -251,4 +251,51 @@ describe('renewal relations', () => {
     expect(applyGlmReviewBonus(renewalCode)).not.toBeNull();
     expect(getCardByTokenKey(tokenKey)?.request_bonus_quota).toBe(666);
   });
+
+  it('resolves a shared API key to the current owner after chained renewals', () => {
+    const rootCode = `${PREFIX}CHAIN-ROOT`;
+    const currentCode = `${PREFIX}CHAIN-CURRENT`;
+    const monthlyCode = `${PREFIX}CHAIN-MONTHLY`;
+    const tokenKey = 'sk-renewal-chain-owner';
+    const rootId = insertRelationCard({
+      code: rootCode,
+      status: 'activated',
+      tokenId: 1357,
+      tokenKey,
+    });
+    const currentId = insertRelationCard({ code: currentCode, status: 'unused' });
+    const monthlyId = insertRelationCard({ code: monthlyCode, status: 'unused' });
+
+    expect(claimCard(currentCode, '127.0.0.1')).toBe(true);
+    applyRenewal({
+      originalCardId: rootId,
+      renewalCardId: currentId,
+      beforeExpiresAt: 1_800_000_000,
+      afterExpiresAt: 1_800_604_800,
+      addedDays: 7,
+      newapiTokenId: 1357,
+      newapiTokenKey: tokenKey,
+      newapiUserId: null,
+      renewalIp: '127.0.0.1',
+    });
+
+    expect(claimCard(monthlyCode, '127.0.0.1')).toBe(true);
+    applyRenewal({
+      originalCardId: currentId,
+      renewalCardId: monthlyId,
+      beforeExpiresAt: 1_800_604_800,
+      afterExpiresAt: 1_803_196_800,
+      addedDays: 30,
+      newapiTokenId: 1357,
+      newapiTokenKey: tokenKey,
+      newapiUserId: null,
+      renewalIp: '127.0.0.1',
+    });
+
+    db().prepare(
+      "UPDATE cards SET status = 'expired', expires_at = ? WHERE id = ?",
+    ).run(1_700_000_000, rootId);
+
+    expect(getCardByTokenKey(tokenKey)?.code).toBe(currentCode);
+  });
 });
