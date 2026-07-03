@@ -7,7 +7,113 @@ import { PLANS } from '@/lib/plans';
 import type { Plan } from '@/lib/plans';
 import { CATEGORY_LIST } from '@/lib/categories';
 import type { CategoryMeta } from '@/lib/categories';
-import { Sparkles, KeyRound, Loader2, ShieldCheck, Zap, ShoppingCart, Film, WandSparkles, Presentation, ImageIcon } from 'lucide-react';
+import { Sparkles, KeyRound, Loader2, ShieldCheck, Zap, ShoppingCart, Film, WandSparkles, Presentation, ImageIcon, GraduationCap, PlayCircle, X } from 'lucide-react';
+
+// 新手视频教程入口 —— 视频文件由服务器 public 目录提供，不入 Git。
+// 部署时把教程 mp4 放到 /opt/nassa-cards/public/tutorials/nassa-api-quickstart.mp4 即可。
+const TUTORIAL_VIDEO_URL = "/tutorials/nassa-api-quickstart.mp4";
+// 可选封面图；不存在时浏览器会静默忽略 poster，不会报错。
+const TUTORIAL_POSTER_URL = "/tutorials/nassa-api-quickstart-poster.jpg";
+
+function TutorialVideoCard() {
+  const [open, setOpen] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  // 关闭弹窗时暂停并停止视频，避免后台继续播放/占用带宽。
+  const handleClose = () => {
+    setOpen(false);
+    setLoadError(false);
+  };
+
+  // Esc 关闭 + 打开时锁定滚动。
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="group flex flex-col justify-between rounded-2xl border border-slate-700 bg-slate-900/60 p-6 text-left shadow-2xl backdrop-blur transition hover:border-amber-500/60"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <div>
+          <div className="flex items-center gap-2 text-amber-400">
+            <GraduationCap className="h-4 w-4" />
+            <span className="text-sm font-medium">新手教程</span>
+          </div>
+          <h3 className="mt-3 text-2xl font-bold text-slate-100">新手视频教程</h3>
+          <p className="mt-2 text-sm text-slate-400">
+            不会配置？跟着视频完成卡密激活、API Key 复制，以及 Cherry Studio / Claude Code / Cursor 配置。
+          </p>
+        </div>
+        <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-3 font-medium text-slate-950 transition group-hover:bg-amber-400">
+          <PlayCircle className="h-4 w-4" />
+          观看教程
+          <span aria-hidden="true">→</span>
+        </div>
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          onClick={handleClose}
+          role="dialog"
+          aria-modal="true"
+          aria-label="新手视频教程"
+        >
+          <div
+            className="relative w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={handleClose}
+              className="absolute right-3 top-3 z-10 rounded-full bg-black/60 p-1.5 text-white/90 transition hover:bg-black/80 hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+              aria-label="关闭教程视频"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="aspect-video w-full bg-black">
+              {loadError ? (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-6 text-center">
+                  <p className="text-base font-medium text-amber-300">视频暂时无法播放</p>
+                  <p className="text-sm text-slate-400">
+                    请稍后重试，或直接联系客服获取教程。如持续失败，可能视频还在上传中。
+                  </p>
+                </div>
+              ) : (
+                <video
+                  controls
+                  playsInline
+                  preload="metadata"
+                  poster={TUTORIAL_POSTER_URL}
+                  className="h-full w-full"
+                  onError={() => setLoadError(true)}
+                >
+                  <source src={TUTORIAL_VIDEO_URL} type="video/mp4" />
+                  您的浏览器不支持视频播放。
+                </video>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 function planDescriptionForCategory(cat: CategoryMeta, plan: Plan): string {
   if (cat.id === 'gpt' && plan.id === '7d') {
@@ -267,6 +373,9 @@ export default function HomePage() {
               <span aria-hidden="true">→</span>
             </div>
           </a>
+
+          {/* 新手视频教程入口 —— 红框位置（image-2 生图右侧） */}
+          <TutorialVideoCard />
         </div>
 
         {/* 套餐展示 */}
