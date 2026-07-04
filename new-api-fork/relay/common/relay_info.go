@@ -102,7 +102,13 @@ type RelayInfo struct {
 	FirstResponseTime time.Time
 	isFirstResponse   bool
 	//SendLastReasoningResponse bool
-	IsStream               bool
+	IsStream bool
+
+	// SynthesizeToolStream keeps the downstream streaming contract while the
+	// mapped upstream is queried non-streaming so tool arguments arrive whole.
+	SynthesizeToolStream     bool
+	ToolStreamRequiredFields map[string][]string
+
 	IsGeminiBatchEmbedding bool
 	IsPlayground           bool
 	UsePrice               bool

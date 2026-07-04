@@ -230,6 +230,15 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
+	info.SynthesizeToolStream = false
+	if shouldUseNonStreamUpstreamForMappedGLMTools(info, request) {
+		upstreamStream := false
+		request.Stream = &upstreamStream
+		request.StreamOptions = nil
+		info.SynthesizeToolStream = true
+		captureMappedToolRequirements(info, request)
+		prependMappedToolJSONConstraint(request)
+	}
 	if info.ChannelType != constant.ChannelTypeOpenAI && info.ChannelType != constant.ChannelTypeAzure {
 		request.StreamOptions = nil
 	}
@@ -281,7 +290,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		// 没有做排除3.5Haiku等，要出问题再加吧，最佳兼容性（不是
 		if request.THINKING != nil && strings.HasPrefix(info.UpstreamModelName, "anthropic") {
 			var thinking dto.Thinking // Claude标准Thinking格式
-			if err := json.Unmarshal(request.THINKING, &thinking); err != nil {
+			if err := common.Unmarshal(request.THINKING, &thinking); err != nil {
 				return nil, fmt.Errorf("error Unmarshal thinking: %w", err)
 			}
 
@@ -347,6 +356,43 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	return request, nil
+}
+
+func shouldUseNonStreamUpstreamForMappedGLMTools(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) bool {
+	if info == nil || info.ChannelMeta == nil || request == nil || !info.IsStream || !info.IsModelMapped {
+		return false
+	}
+	origin := strings.ToLower(strings.TrimSpace(info.OriginModelName))
+	upstream := strings.ToLower(strings.TrimSpace(info.UpstreamModelName))
+	if !strings.HasPrefix(origin, "glm-") || !strings.Contains(upstream, "minimax") {
+		return false
+	}
+	hasToolRequest := len(request.Tools) > 0 || len(request.Functions) > 0 ||
+		request.ToolChoice != nil || len(request.FunctionCall) > 0
+	return hasToolRequest
+}
+
+const mappedToolJSONConstraint = "For every tool call, output one complete strict JSON object in function.arguments. Include every required field from the tool schema, preserve quoted JSON and backslashes inside string values, and never emit markdown, reasoning, comments, truncated JSON, or an empty object when required fields exist."
+
+func prependMappedToolJSONConstraint(request *dto.GeneralOpenAIRequest) {
+	message := dto.Message{Role: request.GetSystemRoleName()}
+	message.SetStringContent(mappedToolJSONConstraint)
+	request.Messages = append([]dto.Message{message}, request.Messages...)
+}
+
+func captureMappedToolRequirements(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
+	info.ToolStreamRequiredFields = make(map[string][]string, len(request.Tools))
+	for _, tool := range request.Tools {
+		params, err := common.Any2Type[map[string]any](tool.Function.Parameters)
+		if err != nil {
+			continue
+		}
+		required, err := common.Any2Type[[]string](params["required"])
+		if err != nil {
+			required = nil
+		}
+		info.ToolStreamRequiredFields[tool.Function.Name] = required
+	}
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
@@ -613,6 +659,9 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if info.SynthesizeToolStream {
+		return NonStreamToolsToStreamHandler(c, info, resp)
+	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeRealtime:
 		err, usage = OpenaiRealtimeHandler(c, info)
