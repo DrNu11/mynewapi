@@ -50,6 +50,8 @@ import type {
 } from '../types'
 import { CreemProductsSection } from './creem-products-section'
 
+const RECHARGE_STORE_URL = 'https://pay.ldxp.cn/shop/9VX65EUH'
+
 interface RechargeFormCardProps {
   topupInfo: TopupInfo | null
   presetAmounts: PresetAmount[]
@@ -65,7 +67,6 @@ interface RechargeFormCardProps {
   onRedemptionCodeChange: (code: string) => void
   onRedeem: () => void
   redeeming: boolean
-  topupLink?: string
   loading?: boolean
   priceRatio?: number
   usdExchangeRate?: number
@@ -95,7 +96,6 @@ export function RechargeFormCard({
   onRedemptionCodeChange,
   onRedeem,
   redeeming,
-  topupLink,
   loading,
   priceRatio = 1,
   usdExchangeRate = 1,
@@ -431,7 +431,7 @@ export function RechargeFormCard({
           <Button
             className='mt-4 gap-2'
             onClick={() =>
-              window.open('https://pay.qxvx.cn/shop/codex', '_blank')
+              window.open(RECHARGE_STORE_URL, '_blank', 'noopener,noreferrer')
             }
           >
             <ExternalLink className='size-4' />
@@ -486,20 +486,18 @@ export function RechargeFormCard({
               {t('Redeem')}
             </Button>
           </div>
-          {topupLink && (
-            <p className='text-muted-foreground text-xs'>
-              {t('Need a redemption code?')}{' '}
-              <a
-                href={topupLink}
-                target='_blank'
-                rel='noopener noreferrer'
-                className='inline-flex items-center gap-1 underline-offset-4 hover:underline'
-              >
-                {t('Get one here')}
-                <ExternalLink className='h-3 w-3' />
-              </a>
-            </p>
-          )}
+          <p className='text-muted-foreground text-xs'>
+            {t('Need a redemption code?')}{' '}
+            <a
+              href={RECHARGE_STORE_URL}
+              target='_blank'
+              rel='noopener noreferrer'
+              className='inline-flex items-center gap-1 underline-offset-4 hover:underline'
+            >
+              {t('Get one here')}
+              <ExternalLink className='h-3 w-3' />
+            </a>
+          </p>
         </div>
       ) : null}
     </TitledCard>
