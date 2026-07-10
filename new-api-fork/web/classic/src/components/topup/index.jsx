@@ -183,11 +183,7 @@ const TopUp = () => {
   };
 
   const openTopUpLink = () => {
-    if (!topUpLink) {
-      showError(t('超级管理员未设置充值链接！'));
-      return;
-    }
-    window.open(topUpLink, '_blank');
+    window.open('https://pay.ldxp.cn/shop/9VX65EUH', '_blank');
   };
 
   const preTopUp = async (payment) => {
