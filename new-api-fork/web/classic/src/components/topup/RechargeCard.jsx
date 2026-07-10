@@ -572,7 +572,7 @@ const RechargeCard = ({
               type='primary'
               icon={<ExternalLink size={16} />}
               onClick={() =>
-                window.open('https://pay.qxvx.cn/shop/codex', '_blank')
+                window.open('https://pay.ldxp.cn/shop/9VX65EUH', '_blank')
               }
             >
               {t('前往充值商店')}
