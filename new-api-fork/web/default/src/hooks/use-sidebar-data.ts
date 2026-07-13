@@ -34,6 +34,8 @@ import {
   CreditCard,
   ListTodo,
   Settings,
+  Images,
+  Clapperboard,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
@@ -60,6 +62,16 @@ export function useSidebarData(): SidebarData {
             title: t('Playground'),
             url: '/playground',
             icon: FlaskConical,
+          },
+          {
+            title: t('Image Workshop'),
+            url: '/image-workshop',
+            icon: Images,
+          },
+          {
+            title: t('Video Workshop'),
+            url: '/video-workshop',
+            icon: Clapperboard,
           },
           {
             title: t('Chat'),
