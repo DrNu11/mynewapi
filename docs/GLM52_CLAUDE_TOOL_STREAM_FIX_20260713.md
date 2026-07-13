@@ -242,3 +242,37 @@ ALTER TABLE `subscription_plans` MODIFY COLUMN `price_amount` decimal(10,6) NOT 
 这不是本修复代码显式执行的 SQL，也没有手工修改业务数据，但它违反了原计划中
 “测试启动不触发数据库修改”的预期。该事实必须保留在发布记录中。后续不得再次重启
 测试容器；生产发布前应明确评估 NewAPI 启动时 migration 行为。
+
+### 10.2 全面复测补充
+
+在同一 13000 测试镜像、同一测试容器（容器内地址 `172.18.0.12:3000`）上继续复测：
+
+- 真实 Claude Code 完整五步链连续 3/3 轮通过；每轮实际工具顺序均为
+  `Bash,Bash,Write,Read,Bash`，落盘 JSON 也由外部脚本再次解析确认；
+- OpenAI `/v1/chat/completions` 流式 Bash 工具调用连续 5/5 通过，
+  `function.arguments` 均为合法 JSON 且包含 `command`；
+- Anthropic `/v1/messages` 强制 Bash 工具调用补充复测 10/10 通过；
+- 复杂 Bash 参数（嵌套引号）3/3 通过；
+- 复杂 Write 参数 5 次中 4 次生成并正确还原，1 次上游没有生成工具调用；
+- Anthropic 非流式强制 Bash 首轮 5 次中 4 次成功、1 次未生成工具调用，
+  随后补充强制 Bash 10/10 通过；
+- `/v1/models` 正常并包含 `glm-5.2`；
+- OpenAI 普通非流式聊天 3/3 通过；
+- 测试容器日志中以下错误关键字计数均为 0：
+  `Invalid tool parameters`、`Error writing file`、
+  `input JSON failed to parse`、`invalid function arguments json string`、
+  `tool call could not be parsed`、`empty stream`、`<think>`、
+  `MiniMax/MiniMax-M3`；
+- `go test ./relay/channel/openai` 再次通过，`git diff --check` 通过，
+  修复文件中未发现遗留调试输出。
+
+仍需单独记录的稳定性问题：Anthropic 普通文本流测试前两次成功，第 3 次返回无文本；
+后续 10 次压力复测过程中又发生请求超时。该路径不经过本次
+`NonStreamToolsToStreamHandler` 工具参数合成逻辑，测试容器日志也没有对应显式错误，
+因此不能据此认定本次 `command` 参数丢失修复失败，但也不能宣称整个 GLM 通道已经
+100% 稳定。另有极低频“模型未生成工具调用”现象；已成功生成的工具调用参数没有发现
+损坏或丢失。
+
+结论：原始故障“Claude Code 收到空工具参数并报 `command is missing`”已由代码修复并
+通过真实客户端重复验证；普通文本流偶发空响应/超时、上游偶发不调用工具是剩余风险，
+在生产发布前必须由负责人明确接受，或另立任务继续处理。
