@@ -276,3 +276,53 @@ ALTER TABLE `subscription_plans` MODIFY COLUMN `price_amount` decimal(10,6) NOT 
 结论：原始故障“Claude Code 收到空工具参数并报 `command is missing`”已由代码修复并
 通过真实客户端重复验证；普通文本流偶发空响应/超时、上游偶发不调用工具是剩余风险，
 在生产发布前必须由负责人明确接受，或另立任务继续处理。
+
+## 11. 生产发布记录
+
+用户在已知普通文本流偶发空响应/超时、`node_repl` 客户端 MCP 未连接以及测试容器
+曾触发自动 schema reconciliation 的前提下，明确授权发布生产。
+
+2026-07-13 16:50（Asia/Shanghai）只重建 NewAPI 应用服务，生产镜像由：
+
+```text
+nassa11111/new-api-hide-model:hide-model-v76-wallet-link-20260710
+sha256:f37be507dcc1f496f757be53e5e56cea5eb6517b0e32cc8247516ba964af2f7e
+```
+
+替换为：
+
+```text
+nassa11111/new-api-hide-model:glm52-claude-tool-delta-test-20260713
+sha256:261d65090c59e472d2f29cbbb3fd9ba1e94b06135b970768345635fe77eae184
+```
+
+发布保持了原容器的 `restart: always`、`newapi-prod-net` 网络、3000 端口映射以及
+`/data`、`/app/logs` 挂载。MySQL 和 Redis 容器 ID、启动时间均未变化。
+
+发布后验证：
+
+- `/api/status`、`/dashboard/overview`、`/card-records`、
+  `/dashboard/card-records` HTTP 检查通过；
+- `/v1/models` 正常且包含 `glm-5.2`；
+- 普通 OpenAI 非流式聊天 3/3 通过；
+- 真实 Claude Code 独立调用 Bash、Write、Read 均通过；
+- 同一 Claude Code 会话的完整工具顺序为
+  `Bash,Bash,Write,Read,Bash`，文件存在且 JSON 外部校验通过；
+- 发布后日志中工具参数、Write、JSON parse、空流、`<think>` 和上游模型名相关
+  禁止关键字计数均为 0。
+
+浏览器未携带登录会话，访问概览页会跳转登录，因此没有目视确认侧栏菜单文字；两个
+卡密记录路由和页面资源均保留在该生产基线中。
+
+### 11.1 生产启动自动 SQL
+
+生产 NewAPI 应用启动时再次实际执行了以下语句：
+
+```sql
+ALTER TABLE `subscription_plans`
+  MODIFY COLUMN `price_amount` decimal(10,6) NOT NULL DEFAULT 0.000000;
+```
+
+MySQL 容器没有重启，也没有人工执行 SQL，但应用自身的自动 migration 确实造成了
+schema reconciliation。该事实不能记为“数据库未修改”。发布过程没有执行 channel、
+模型映射或业务数据修改命令。
