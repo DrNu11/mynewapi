@@ -195,3 +195,50 @@ data: {"type":"content_block_stop","index":0}
 - 任一真实工具测试失败，立即恢复当前镜像
   `sha256:f37be507dcc1f496f757be53e5e56cea5eb6517b0e32cc8247516ba964af2f7e`。
 
+## 10. 实际执行结果
+
+修复提交：
+
+```text
+24f8aa17 fix: stream mapped GLM tool arguments to Claude clients
+```
+
+13000 测试镜像：
+
+```text
+nassa11111/new-api-hide-model:glm52-claude-tool-delta-test-20260713
+sha256:261d65090c59e472d2f29cbbb3fd9ba1e94b06135b970768345635fe77eae184
+```
+
+测试结果：
+
+- `relay/channel/openai` Go 包测试通过；
+- 原始 Claude SSE 连续 10/10 次通过：
+  - `message_start.model` 为 `glm-5.2`；
+  - `content_block_start.input` 为 `{}`；
+  - `input_json_delta.partial_json` 可解析且包含 `command: pwd`；
+- 真实 Claude Code 2.1.177：
+  - Bash `pwd`：成功；
+  - Bash `mkdir -p /tmp/glm_test`：成功；
+  - Write `/tmp/glm_test/test.json`：成功；
+  - Read：成功，内容一致；
+  - Bash `python3 -m json.tool`：成功；
+  - 未出现 `command is missing`、空 input、Write 参数错误或 JSON parse error。
+
+`node_repl` 未通过，原因与 NewAPI 无关：Claude Code 启动时报告用户级
+`node_repl` MCP `Failed to connect`，工具列表中没有
+`mcp__node_repl__node_repl`。测试明确禁止 Bash 替代，因此在第 6 步如实停止。
+
+### 10.1 测试环境数据库事实记录
+
+13000 旧测试容器与生产 MySQL 位于同一 Docker 网络，并携带数据库连接环境变量。
+新测试镜像首次启动时执行了 NewAPI 自带的自动 migration/schema reconciliation，日志记录：
+
+```sql
+ALTER TABLE `custom_oauth_providers` MODIFY COLUMN `enabled` boolean DEFAULT false;
+ALTER TABLE `subscription_plans` MODIFY COLUMN `price_amount` decimal(10,6) NOT NULL DEFAULT 0.000000;
+```
+
+这不是本修复代码显式执行的 SQL，也没有手工修改业务数据，但它违反了原计划中
+“测试启动不触发数据库修改”的预期。该事实必须保留在发布记录中。后续不得再次重启
+测试容器；生产发布前应明确评估 NewAPI 启动时 migration 行为。
