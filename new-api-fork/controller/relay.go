@@ -468,6 +468,14 @@ func RelayNotFound(c *gin.Context) {
 }
 
 func RelayTaskFetch(c *gin.Context) {
+	// Fetch routes do not select a new channel, so the distributor is not run.
+	// Set the mode explicitly before building RelayInfo; otherwise video fetches
+	// fall back to RelayModeUnknown and can never reach the saved task.
+	if c.Request.Method == http.MethodGet &&
+		(strings.Contains(c.Request.URL.Path, "/v1/videos/") ||
+			strings.Contains(c.Request.URL.Path, "/v1/video/generations/")) {
+		c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+	}
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, &dto.TaskError{

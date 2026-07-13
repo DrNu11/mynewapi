@@ -18,16 +18,16 @@ func SetVideoRouter(router *gin.Engine) {
 
 	videoV1Router := router.Group("/v1")
 	videoV1Router.Use(middleware.RouteTag("relay"))
-	videoV1Router.Use(middleware.TokenAuth(), middleware.Distribute())
+	videoV1Router.Use(middleware.TokenAuth())
 	{
-		videoV1Router.POST("/video/generations", controller.RelayTask)
+		videoV1Router.POST("/video/generations", middleware.Distribute(), controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
-		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
+		videoV1Router.POST("/videos/:video_id/remix", middleware.Distribute(), controller.RelayTask)
 	}
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create
 	{
-		videoV1Router.POST("/videos", controller.RelayTask)
+		videoV1Router.POST("/videos", middleware.Distribute(), controller.RelayTask)
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
 
