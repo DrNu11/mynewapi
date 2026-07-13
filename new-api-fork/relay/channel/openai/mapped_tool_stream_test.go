@@ -145,8 +145,9 @@ func TestNonStreamMappedToolResponsePreservesJSONContentInClaudeInput(t *testing
 	_, apiErr := NonStreamToolsToStreamHandler(c, info, resp)
 	require.Nil(t, apiErr)
 	body := recorder.Body.String()
-	require.Contains(t, body, `"input":{"content":"{\"ok\":true,\"model\":\"glm-5.2\"}","file_path":"/tmp/a.json","provider":"aws"}`)
-	require.NotContains(t, body, "input_json_delta")
+	require.Contains(t, body, `"input":{}`)
+	require.Contains(t, body, `"type":"input_json_delta"`)
+	require.Contains(t, body, `"partial_json":"{\"file_path\":\"/tmp/a.json\",\"content\":\"{\\\"ok\\\":true,\\\"model\\\":\\\"glm-5.2\\\"}\",\"provider\":\"aws\"}"`)
 }
 
 func TestNonStreamMappedToolResponseRejectsInvalidArguments(t *testing.T) {
@@ -273,10 +274,11 @@ func TestNonStreamMappedToolResponseSynthesizesClaudeSSE(t *testing.T) {
 	require.Contains(t, body, `"model":"glm-5.2"`)
 	require.Contains(t, body, `"type":"tool_use"`)
 	require.Contains(t, body, `"name":"Bash"`)
-	require.Contains(t, body, `"input":{"command":"echo hello","description":"test"}`)
+	require.Contains(t, body, `"input":{}`)
+	require.Contains(t, body, `"type":"input_json_delta"`)
+	require.Contains(t, body, `"partial_json":"{\"command\":\"echo hello\",\"description\":\"test\"}"`)
 	require.Contains(t, body, "event: content_block_stop")
 	require.Contains(t, body, "event: message_stop")
-	require.NotContains(t, body, "input_json_delta")
 	require.NotContains(t, body, "MiniMax")
 	require.NotContains(t, body, "<think>")
 }

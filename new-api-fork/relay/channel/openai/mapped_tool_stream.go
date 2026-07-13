@@ -138,7 +138,15 @@ func synthesizeClaudeToolStream(c *gin.Context, info *relaycommon.RelayInfo, res
 					Type:  "tool_use",
 					Id:    call.id,
 					Name:  call.name,
-					Input: call.input,
+					Input: map[string]any{},
+				},
+			})
+			_ = relayhelper.ClaudeData(c, dto.ClaudeResponse{
+				Type:  "content_block_delta",
+				Index: &idx,
+				Delta: &dto.ClaudeMediaMessage{
+					Type:        "input_json_delta",
+					PartialJson: &call.arguments,
 				},
 			})
 			_ = relayhelper.ClaudeData(c, dto.ClaudeResponse{Type: "content_block_stop", Index: &idx})
