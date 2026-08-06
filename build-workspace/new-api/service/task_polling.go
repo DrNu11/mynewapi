@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -443,8 +445,20 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		} else if taskResult.Url != "" {
-			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
-			task.PrivateData.ResultURL = taskResult.Url
+			// Direct upstream URL (e.g. Kling, Ali, Doubao, Hailuo OSS signed URL, etc.)
+			// Signed URLs (e.g. Aliyun OSS) expire within hours; persist the video
+			// to local storage so the result stays playable indefinitely.
+			if strings.HasPrefix(taskResult.Url, "http://") || strings.HasPrefix(taskResult.Url, "https://") {
+				persisted := persistVideoLocally(ctx, task.TaskID, taskResult.Url)
+				if persisted {
+					// Serve through the local proxy endpoint so the URL never expires.
+					task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+				} else {
+					task.PrivateData.ResultURL = taskResult.Url
+				}
+			} else {
+				task.PrivateData.ResultURL = taskResult.Url
+			}
 		} else {
 			// No URL from adaptor — construct proxy URL using public task ID
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
@@ -499,6 +513,79 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+// persistVideoLocally downloads the video from the (possibly expiring) upstream
+// URL into /data/videos/<task_id>.mp4 so the result remains playable after the
+// upstream signed URL expires (e.g. Aliyun OSS short-lived signatures).
+// Returns true on success; on any failure it logs and returns false so the
+// caller keeps the original URL as a fallback.
+func persistVideoLocally(ctx context.Context, taskID, videoURL string) bool {
+	dir := filepath.Join(dataDir(), "videos")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("persistVideoLocally: mkdir %s failed: %s", dir, err.Error()))
+		return false
+	}
+	dst := filepath.Join(dir, taskID+".mp4")
+
+	client := GetHttpClient()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, videoURL, nil)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("persistVideoLocally: build request for %s failed: %s", taskID, err.Error()))
+		return false
+	}
+	req.Header.Set("User-Agent", "new-api-video-persist/1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("persistVideoLocally: download %s failed: %s", taskID, err.Error()))
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		logger.LogError(ctx, fmt.Sprintf("persistVideoLocally: upstream status %d for %s", resp.StatusCode, taskID))
+		return false
+	}
+
+	// Write to a temp file first so a partial download never leaves a corrupt
+	// file at the final path.
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("persistVideoLocally: create %s failed: %s", tmp, err.Error()))
+		return false
+	}
+	written, copyErr := io.Copy(out, resp.Body)
+	out.Close()
+	if copyErr != nil {
+		os.Remove(tmp)
+		logger.LogError(ctx, fmt.Sprintf("persistVideoLocally: write %s failed: %s", tmp, copyErr.Error()))
+		return false
+	}
+	if written == 0 {
+		os.Remove(tmp)
+		logger.LogError(ctx, fmt.Sprintf("persistVideoLocally: empty body for %s", taskID))
+		return false
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		logger.LogError(ctx, fmt.Sprintf("persistVideoLocally: rename to %s failed: %s", dst, err.Error()))
+		return false
+	}
+	logger.LogInfo(ctx, fmt.Sprintf("persistVideoLocally: saved %s (%d bytes)", dst, written))
+	return true
+}
+
+// dataDir returns the application data directory. NewAPI runs with /data as its
+// working directory (see Dockerfile WORKDIR /data); fall back to os.Getwd().
+func dataDir() string {
+	if _, err := os.Stat("/data"); err == nil {
+		return "/data"
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return wd
 }
 
 func redactVideoResponseBody(body []byte) []byte {

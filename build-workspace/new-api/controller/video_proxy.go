@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,7 +22,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// videoProxyError returns a standardized OpenAI-style error response.
+// localVideoFile returns the path to a locally-persisted video for the task if
+// one exists, otherwise an empty string. Videos are stored by the task poller
+// at /data/videos/<task_id>.mp4.
+func localVideoFile(taskID string) string {
+	if taskID == "" {
+		return ""
+	}
+	base := "/data"
+	if _, err := os.Stat(base); err != nil {
+		wd, wdErr := os.Getwd()
+		if wdErr != nil {
+			return ""
+		}
+		base = wd
+	}
+	path := filepath.Join(base, "videos", taskID+".mp4")
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
+}
+
 func videoProxyError(c *gin.Context, status int, errType, message string) {
 	c.JSON(status, gin.H{
 		"error": gin.H{
@@ -112,6 +135,14 @@ func VideoProxy(c *gin.Context) {
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 		videoURL = task.GetResultURL()
+		// If a local persisted copy exists (/data/videos/<task_id>.mp4), serve it
+		// directly so the result survives upstream signed-URL expiry.
+		if localVideoPath := localVideoFile(task.TaskID); localVideoPath != "" {
+			c.Writer.Header().Set("Content-Type", "video/mp4")
+			c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+			http.ServeFile(c.Writer, c.Request, localVideoPath)
+			return
+		}
 	}
 
 	videoURL = strings.TrimSpace(videoURL)
